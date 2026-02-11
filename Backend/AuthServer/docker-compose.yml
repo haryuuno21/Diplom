@@ -1,0 +1,37 @@
+services:
+  auth-server:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: auth-server
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - auth-db
+      - redis
+
+  auth-db:
+    image: postgres:16
+    container_name: auth-postgres
+    env_file:
+      - .env
+    volumes:
+      - auth_postgres_:/var/lib/postgresql/data
+      - ./init-auth.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"  # только для разработки, в продакшене убрать
+
+  # Redis для сессий
+  redis:
+    image: redis:7-alpine
+    container_name: auth-redis
+    volumes:
+      - redis_:/data
+    ports:
+      - "6379:6379"  # только для разработки, в продакшене убрать
+
+volumes:
+  auth_postgres_:
+  redis_:

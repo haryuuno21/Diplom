@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link type="text/css" rel="stylesheet" href="css/main.css">
+    <title>ProgCraft - Выбор режима</title>
+</head>
+<body>
+    <header>
+        ProgCraft
+    </header>
+    
+    <div class="welcome-message">
+        Привет, <span id="username">игрок</span>!
+    </div>
+    
+    <div class="mode-selection">
+        <div class="mode-options">
+            <div class="mode-card">
+                <h2>🎮 Создать сервер</h2>
+                <p>Создайте новый игровой мир для одиночной игры или пригласите друзей присоединиться к вашему серверу.</p>
+                <button class="btn btn-primary" id="createServerBtn">
+                    Создать сервер
+                </button>
+            </div>
+            
+            <div class="mode-card">
+                <h2>👥 Подключиться к серверу</h2>
+                <p>Присоединитесь к существующему игровому миру, используя ID сервера.</p>
+                <div class="join-form">
+                    <input type="text" id="serverIdInput" placeholder="Введите ID сервера">
+                    <button class="btn btn-secondary" id="joinServerBtn">
+                        Подключиться
+                    </button>
+                </div>
+                <div id="joinError" class="error-message"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="logout-section">
+        <button class="btn btn-outline" id="logoutBtn">
+            Выйти из аккаунта
+        </button>
+    </div>
+</body>
+</html>
