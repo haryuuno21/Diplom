@@ -6,6 +6,7 @@ Direction = Literal["N", "W", "S", "E"]
 
 @dataclass
 class User:
+    sid: str
     login: str
 
 @dataclass
@@ -19,3 +20,7 @@ class Player:
 class Block:
     position: Coordinates = (0, 0, 0)
     id: int = 0
+
+@dataclass
+class World:
+    pass
