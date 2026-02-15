@@ -8,6 +8,8 @@ import time
 import random
 import string
 
+from models import CreateWorldRequest, World_info
+
 # Создаем FastAPI приложение
 app = FastAPI()
 
@@ -39,27 +41,25 @@ app.mount("/", socketio.ASGIApp(sio))
 #       Проверяем наличие сессии
 #       Получаем пользователя
 #       Генерируем мир на основе сида
-#       Записываем в бд новый мир (Id, Seed, Name, creator, created_at, last_usage
+#       Записываем в бд новый мир (Id, Seed, Name, creator, created_at, last_save -> save)
 #       ###
 @app.post("/api/worlds")
-async def create_world(request: Request):
+async def createWorld(create_world_body:CreateWorldRequest, request: Request):
     """Создание игрового мира"""
-    user = get_user(request)
+    user = getUserFromSession(request)
     if not user:
         raise Exception()
     
-
-
-
+    
 @app.get("/api/words")
-async def get_worlds(request: Request):
+async def getWorlds(request: Request):
     """Получить список игровых миров"""
 
 @app.post("/api/server")
-async def create_server(request: Request):
+async def createServer(request: Request):
     """Создать сервер для мира"""
 
-def get_user(request:Request):
+def getUserFromSession(request:Request):
     session_id = request.cookies.get("session_id")
     if not session_id or not redis.check_session(session_id):
         return None

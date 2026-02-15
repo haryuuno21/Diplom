@@ -7,11 +7,6 @@ Coordinates = Tuple[int, int, int]
 Direction = Literal["N", "W", "S", "E"]
 
 @dataclass
-class User:
-    sid: str
-    login: str
-
-@dataclass
 class Player:
     user: User
     position: Coordinates = (0, 0, 0)
@@ -28,23 +23,23 @@ class World:
     pass
 
 class Connection:
-    connection_sid: str
-    user_sid: str
+    connection_id: str
+    user_id: str
 
 
 class GameServer:
-    server_sid: str
+    server_id: str
     server_code: str  # Уникальный код для подключения (например: "ABC123")
-    host_sid: str    # SID создателя сервера
-    connections: List[Connection]  # Список SID всех подключений
+    host_id: str    # id создателя сервера
+    connections: List[Connection]  # Список id всех подключений
     world: World
     created_at: float
     max_players: int
 
-    def __init__(self, world: World, host_sid: str, max_players: int):
-        self.server_sid = str(uuid.uuid4())
+    def __init__(self, world: World, host_id: str, max_players: int):
+        self.server_id = str(uuid.uuid4())
         self.server_code = self._generate_code()
-        self.host_sid = host_sid
+        self.host_id = host_id
         self.world_state = world
         self.created_at = time()
         self.max_players = max_players
@@ -59,11 +54,11 @@ class GameServer:
             if code not in active_servers:
                 return code
     
-    def add_player(self, sid: str):
-        if sid not in self.players:
-            self.players.append(sid)
+    def add_player(self, id: str):
+        if id not in self.players:
+            self.players.append(id)
     
-    def remove_player(self, sid: str):
-        if sid in self.players:
-            self.players.remove(sid)
+    def remove_player(self, id: str):
+        if id in self.players:
+            self.players.remove(id)
         return len(self.players) == 0  # True если сервер пустой
