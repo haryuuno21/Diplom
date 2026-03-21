@@ -13,7 +13,7 @@ async def init_db():
     return await create_pool(DATABASE_URL, min_size=5, max_size=20)
 
 # Redis клиент
-from redis import from_url
+from redis.asyncio import from_url
 
 async def init_redis():
     return from_url(
