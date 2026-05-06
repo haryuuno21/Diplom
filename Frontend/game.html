@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/css/game.css">
+    <title>BASIC Sandbox</title>
+</head>
+<body>
+    <div class="game-shell">
+        <aside class="sidebar">
+            <section class="sidebar-card">
+                <p class="eyebrow">Сессия</p>
+                <h1>Игровой сервер</h1>
+                <div class="session-meta">
+                    <div>Код сервера: <strong id="serverCodeLabel">...</strong></div>
+                    <div>Игрок: <strong id="playerNameLabel">...</strong></div>
+                    <div>Мир: <strong id="worldNameLabel">...</strong></div>
+                </div>
+                <div class="sidebar-actions">
+                    <button id="copyServerCodeBtn" class="ghost-button" type="button">Копировать код</button>
+                    <button id="leaveGameBtn" class="ghost-button danger" type="button">Выйти в лобби</button>
+                </div>
+            </section>
+
+            <section class="sidebar-card">
+                <p class="eyebrow">Статус</p>
+                <div class="stats-grid" id="statsGrid">
+                    <div class="stat"><span>Координаты</span><strong id="coordsValue">-</strong></div>
+                    <div class="stat"><span>Направление</span><strong id="directionValue">-</strong></div>
+                    <div class="stat"><span>Режим</span><strong id="modeValue">-</strong></div>
+                    <div class="stat"><span>Блок</span><strong id="locationValue">-</strong></div>
+                    <div class="stat"><span>Здоровье</span><strong id="healthValue">-</strong></div>
+                    <div class="stat"><span>Температура</span><strong id="temperatureValue">-</strong></div>
+                    <div class="stat"><span>Tick</span><strong id="tickValue">-</strong></div>
+                    <div class="stat"><span>Игроков</span><strong id="playersValue">-</strong></div>
+                </div>
+                <div class="inline-message" id="statusMessage"></div>
+            </section>
+
+            <section class="sidebar-card">
+                <p class="eyebrow">Управление</p>
+                <ul class="control-list">
+                    <li><strong>W A S D</strong> — движение</li>
+                    <li><strong>Q / E</strong> — поворот</li>
+                    <li><strong>H</strong> — лечение</li>
+                    <li><strong>R</strong> — рестарт игрока</li>
+                </ul>
+            </section>
+
+            <section class="sidebar-card">
+                <div class="panel-header">
+                    <div>
+                        <p class="eyebrow">BASIC</p>
+                        <h2>Скрипт игрока</h2>
+                    </div>
+                    <div class="script-actions">
+                        <button id="runScriptBtn" class="primary-button compact" type="button">Запустить</button>
+                        <button id="stopScriptBtn" class="ghost-button compact" type="button">Остановить</button>
+                    </div>
+                </div>
+                <textarea id="scriptInput" class="script-input" spellcheck="false">WHILE(DEPTH("front") = 0)
+    MOVE("forward")
+END WHILE</textarea>
+                <div class="inline-message" id="scriptMessage"></div>
+            </section>
+
+            <section class="sidebar-card chat-card">
+                <div class="panel-header">
+                    <div>
+                        <p class="eyebrow">Чат</p>
+                        <h2>Игровой канал</h2>
+                    </div>
+                </div>
+                <div id="chatMessages" class="chat-messages"></div>
+                <form id="chatForm" class="chat-form">
+                    <input id="chatInput" type="text" maxlength="300" placeholder="Сообщение в сервер..." required>
+                    <button class="primary-button compact" type="submit">Отправить</button>
+                </form>
+            </section>
+        </aside>
+
+        <main class="scene-panel">
+            <div class="scene-toolbar">
+                <div class="toolbar-chip">Авторитетное состояние: backend</div>
+                <div class="toolbar-chip">Рендер: three.js</div>
+                <div class="toolbar-chip" id="connectionChip">Соединение...</div>
+            </div>
+            <div id="sceneRoot" class="scene-root"></div>
+        </main>
+    </div>
+
+    <script type="module" src="/js/game.js"></script>
+</body>
+</html>

@@ -1,79 +1,215 @@
-###
-# Данный класс будет хранить все созданные сервера
-# Словарь Server code - Server
-# ###
-
-import asyncio
 import random
 
-from gameServerManager import GameServerManager
-from apiModels import User
-from gameDBService import GameDBService
+from apiModels import GameServerResponse, SessionUser
 from gameClasses import GameServer
+from gameDBService import GameDBService
+from gameServerManager import GameServerManager
 
 
 class ServerControlService:
     def __init__(self, game_db_service: GameDBService):
-        self.managers: dict[str, GameServerManager]
+        self.managers: dict[str, GameServerManager] = {}
         self.game_db_service = game_db_service
 
-    async def createServer(self, world_id: int, user: User) -> str:
-        """
-        Создает новый игровой сервер
-        
-        Args:
-            world_id: ID мира для создания сервера
-            user: Пользователь, создающий сервер
-            
-        Returns:
-            Код сервера для подключения игроков
-        """
-        server_code = self.generateServerCode()
-        world = await self.game_db_service.load_world(world_id)
+    async def create_server(self, world_id: int, user: SessionUser) -> GameServerResponse:
+        existing = self._find_existing_server(world_id, user.id)
+        if existing:
+            return await self._store_and_build_response(existing)
+
+        world = await self.game_db_service.get_world_for_user(world_id, user.id)
+        if not world:
+            raise ValueError("World not found or access denied")
+
         server = GameServer(
-            server_code=server_code,
-            host_id=user.id,
             world=world,
+            host_id=user.id,
             max_players=4,
+            server_code=self.generate_server_code(),
         )
-        manager = GameServerManager(server, self.game_db_service)
-        self.managers[server_code] = manager
-        asyncio.create_task(manager.game_loop())
+        manager = GameServerManager(
+            server,
+            manual_action_tick_cost=1,
+            script_action_tick_cost=4,
+            tick_interval_seconds=0.05,
+        )
+        manager.start()
+        self.managers[server.server_code] = manager
 
-        return server_code
+        return await self._store_and_build_response(manager)
 
-    def generateServerCode(self):
-        """
-        Генерирует уникальный 6-символьный код сервера
-        
-        Returns:
-            Уникальный код сервера
-        """
+    async def get_server_info(self, server_code: str) -> GameServerResponse | None:
+        manager = self.managers.get(server_code)
+        if manager:
+            return await self._store_and_build_response(manager)
+        return await self.game_db_service.get_active_server(server_code)
+
+    async def add_player(self, server_code: str, sid: str, user: SessionUser) -> dict:
+        manager = self._require_manager(server_code)
+        await manager.add_player(sid, user)
+        await self._store_and_build_response(manager)
+        return manager.build_world_payload(sid)
+
+    async def remove_player(self, server_code: str, sid: str) -> bool:
+        manager = self.managers.get(server_code)
+        if not manager:
+            return False
+
+        should_stop = await manager.remove_player(sid)
+        if should_stop:
+            await self.stop_server(server_code)
+            return True
+
+        await self._store_and_build_response(manager)
+        return False
+
+    async def move_player(self, server_code: str, sid: str, direction: str) -> tuple[dict, dict]:
+        manager = self._require_manager(server_code)
+        state, public_state = await manager.move_player(sid, direction)
+        await self._store_and_build_response(manager)
+        return state, public_state
+
+    async def turn_player(self, server_code: str, sid: str, direction: str) -> tuple[dict, dict]:
+        manager = self._require_manager(server_code)
+        state, public_state = await manager.turn_player(sid, direction)
+        await self._store_and_build_response(manager)
+        return state, public_state
+
+    async def heal_player(self, server_code: str, sid: str) -> tuple[dict, dict]:
+        manager = self._require_manager(server_code)
+        state, public_state = await manager.heal_player(sid)
+        await self._store_and_build_response(manager)
+        return state, public_state
+
+    async def restart_player(self, server_code: str, sid: str) -> tuple[dict, dict]:
+        manager = self._require_manager(server_code)
+        state, public_state = await manager.restart_player(sid)
+        await self._store_and_build_response(manager)
+        return state, public_state
+
+    async def execute_script(
+        self,
+        server_code: str,
+        sid: str,
+        script_text: str,
+        *,
+        on_state_change=None,
+    ) -> tuple[dict, dict, dict]:
+        manager = self._require_manager(server_code)
+        state, public_state, script_result = await manager.execute_script(
+            sid,
+            script_text,
+            on_state_change=on_state_change,
+        )
+        await self._store_and_build_response(manager)
+        return state, public_state, script_result
+
+    async def stop_script(self, server_code: str, sid: str) -> tuple[dict, dict] | None:
+        manager = self._require_manager(server_code)
+        result = await manager.stop_script(sid)
+        if result is not None:
+            await self._store_and_build_response(manager)
+        return result
+
+    async def update_player_state(self, server_code: str, sid: str, payload: dict) -> dict | None:
+        manager = self.managers.get(server_code)
+        if not manager:
+            return None
+
+        updated = await manager.update_player_state(
+            sid,
+            position=payload.get("position"),
+            rotation=payload.get("rotation"),
+            health=payload.get("health"),
+        )
+        if updated is not None:
+            await self._store_and_build_response(manager)
+        return updated
+
+    def build_player_state(self, server_code: str, sid: str) -> dict:
+        manager = self._require_manager(server_code)
+        return manager.build_state_payload(sid)
+
+    def build_tick_payload(self, server_code: str, sid: str) -> dict:
+        manager = self._require_manager(server_code)
+        return manager.build_tick_payload(sid)
+
+    def list_player_ids(self, server_code: str) -> list[str]:
+        manager = self._require_manager(server_code)
+        return manager.list_player_ids()
+
+    def build_world_payload(self, server_code: str, sid: str | None = None) -> dict:
+        manager = self._require_manager(server_code)
+        return manager.build_world_payload(sid)
+
+    async def add_chat_message(self, server_code: str, sid: str, payload: dict | str) -> dict:
+        manager = self._require_manager(server_code)
+        return await manager.add_chat_message(sid, payload)
+
+    async def stop_world_servers(self, world_id: int) -> None:
+        for server_code, manager in list(self.managers.items()):
+            if manager.server.world_id == world_id:
+                await self.stop_server(server_code)
+
+    async def stop_server(self, server_code: str) -> None:
+        manager = self.managers.pop(server_code, None)
+        if not manager:
+            await self.game_db_service.delete_active_server(server_code)
+            return
+
+        await self.game_db_service.save_world_state(
+            manager.server.world_id,
+            manager.server.world.world_state,
+        )
+        manager.server.status = "stopped"
+        await self.game_db_service.update_server_status(server_code, "stopped", 0)
+        await self.game_db_service.delete_active_server(server_code)
+        await manager.stop()
+
+    async def persist_server_state(self, server_code: str) -> None:
+        manager = self.managers.get(server_code)
+        if not manager:
+            return
+        await self.game_db_service.save_world_state(
+            manager.server.world_id,
+            manager.server.world.world_state,
+        )
+
+    async def shutdown(self) -> None:
+        for server_code in list(self.managers.keys()):
+            await self.stop_server(server_code)
+
+    def generate_server_code(self) -> str:
         chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-        
-        # Попытки генерации (защита от бесконечного цикла)
-        max_attempts = 1000
-        
-        for _ in range(max_attempts):
-            code = ''.join(random.choices(chars, k=6))
-            
-            # Проверяем уникальность
+        for _ in range(1000):
+            code = "".join(random.choices(chars, k=6))
             if code not in self.managers:
                 return code
-        
-        raise RuntimeError("Could not generate unique server code after multiple attempts")
-    
-    async def stopServer(self, server_code: str):
-        """
-        Останавливает сервер и удаляет его из управления
-        
-        Args:
-            server_code: Код сервера для остановки
-        """
-        if server_code in self.servers:
-            # Останавливаем игровой цикл
-            if server_code in self.managers:
-                await self.managers[server_code].stop()
-                del self.managers[server_code]
-            
-            print(f"Server {server_code} stopped and removed")
+        raise RuntimeError("Could not generate a unique server code")
+
+    def _find_existing_server(self, world_id: int, host_id: int) -> GameServerManager | None:
+        for manager in self.managers.values():
+            if manager.server.world_id == world_id and manager.server.host_id == host_id:
+                return manager
+        return None
+
+    def _require_manager(self, server_code: str) -> GameServerManager:
+        manager = self.managers.get(server_code)
+        if not manager:
+            raise ValueError("Server is not active")
+        return manager
+
+    async def _store_and_build_response(self, manager: GameServerManager) -> GameServerResponse:
+        response = GameServerResponse(
+            server_id=manager.server.server_id,
+            server_code=manager.server.server_code,
+            world_id=manager.server.world_id,
+            world_name=manager.server.world_name,
+            host_id=manager.server.host_id,
+            status=manager.server.status,
+            created_at=manager.server.created_at,
+            player_count=manager.server.player_count,
+            max_players=manager.server.max_players,
+        )
+        await self.game_db_service.upsert_server_record(manager.server)
+        await self.game_db_service.store_active_server(response)
+        return response

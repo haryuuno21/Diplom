@@ -1,3 +1,5 @@
 Backend/AuthServer/.env
 /Backend/GameServer/.venv
 Backend/GameServer/.env
+/docs
+/robot-routing-master

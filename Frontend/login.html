@@ -3,58 +3,61 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link type="text/css" rel="stylesheet" href="css/login.css">
-    <title>Programming Sandbox</title>
+    <link rel="stylesheet" href="/css/login.css">
+    <title>BASIC Sandbox Auth</title>
 </head>
 <body>
-    <header>ProgCraft</header>
-    
-    <main class="auth-container">
-        <div class="auth-card">
-            <h1 class="auth-title">Добро пожаловать!</h1>
-            
-            <!-- Форма входа -->
-            <div id="loginForm" class="auth-form active">
-                <h2>Вход</h2>
-                <form id="loginFormElement">
-                    <div class="form-group">
-                        <input type="text" id="loginUsername" placeholder="Имя пользователя" required>
-                    </div>
-                    <div class="form-group">
-                        <input type="password" id="loginPassword" placeholder="Пароль" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Войти</button>
-                </form>
-                <p class="switch-text">
-                    Нет аккаунта? 
-                    <button type="button" class="link-btn" onclick="showForm('register')">Зарегистрироваться</button>
-                </p>
-                <div id="loginError" class="error-message"></div>
+    <header class="auth-header">Basic Sandbox</header>
+
+    <main class="auth-layout">
+        <section class="auth-intro">
+            <h1>BASIC Sandbox</h1>
+        </section>
+
+        <section class="auth-card">
+            <div class="auth-tabs">
+                <button class="tab-button active" id="showLoginBtn" type="button">Вход</button>
+                <button class="tab-button" id="showRegisterBtn" type="button">Регистрация</button>
             </div>
 
-            <!-- Форма регистрации -->
-            <div id="registerForm" class="auth-form">
-                <h2>Регистрация</h2>
-                <form id="registerFormElement">
-                    <div class="form-group">
-                        <input type="text" id="registerUsername" placeholder="Имя пользователя" required minlength="3" maxlength="20">
-                    </div>
-                    <div class="form-group">
-                        <input type="password" id="registerPassword" placeholder="Пароль" required minlength="6">
-                    </div>
-                    <div class="form-group">
-                        <input type="password" id="registerConfirmPassword" placeholder="Подтвердите пароль" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Зарегистрироваться</button>
+            <div id="loginForm" class="auth-form active">
+                <h2>Войти в аккаунт</h2>
+                <form id="loginFormElement" class="stack-form">
+                    <label class="field">
+                        <span>Логин</span>
+                        <input type="text" id="loginUsername" placeholder="robot_builder" required>
+                    </label>
+                    <label class="field">
+                        <span>Пароль</span>
+                        <input type="password" id="loginPassword" placeholder="Введите пароль" required>
+                    </label>
+                    <button class="primary-button" type="submit">Войти</button>
                 </form>
-                <p class="switch-text">
-                    Уже есть аккаунт? 
-                    <button type="button" class="link-btn" onclick="showForm('login')">Войти</button>
-                </p>
-                <div id="registerError" class="error-message"></div>
+                <div id="loginError" class="inline-message error"></div>
             </div>
-        </div>
+
+            <div id="registerForm" class="auth-form">
+                <h2>Создать аккаунт</h2>
+                <form id="registerFormElement" class="stack-form">
+                    <label class="field">
+                        <span>Логин</span>
+                        <input type="text" id="registerUsername" minlength="3" maxlength="50" placeholder="basic_master" required>
+                    </label>
+                    <label class="field">
+                        <span>Пароль</span>
+                        <input type="password" id="registerPassword" minlength="6" placeholder="Не менее 6 символов" required>
+                    </label>
+                    <label class="field">
+                        <span>Подтвердите пароль</span>
+                        <input type="password" id="registerConfirmPassword" minlength="6" placeholder="Повторите пароль" required>
+                    </label>
+                    <button class="primary-button" type="submit">Зарегистрироваться</button>
+                </form>
+                <div id="registerError" class="inline-message error"></div>
+            </div>
+        </section>
     </main>
+
+    <script type="module" src="/js/login.js"></script>
 </body>
-<script src="js/login.js"></script>  
 </html>

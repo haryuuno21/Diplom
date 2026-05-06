@@ -3,46 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link type="text/css" rel="stylesheet" href="css/main.css">
-    <title>ProgCraft - Выбор режима</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <title>BASIC Sandbox</title>
 </head>
 <body>
-    <header>
-        ProgCraft
-    </header>
-    
-    <div class="welcome-message">
-        Привет, <span id="username">игрок</span>!
-    </div>
-    
-    <div class="mode-selection">
-        <div class="mode-options">
-            <div class="mode-card">
-                <h2>🎮 Создать сервер</h2>
-                <p>Создайте новый игровой мир для одиночной игры или пригласите друзей присоединиться к вашему серверу.</p>
-                <button class="btn btn-primary" id="createServerBtn">
-                    Создать сервер
-                </button>
-            </div>
-            
-            <div class="mode-card">
-                <h2>👥 Подключиться к серверу</h2>
-                <p>Присоединитесь к существующему игровому миру, используя ID сервера.</p>
-                <div class="join-form">
-                    <input type="text" id="serverIdInput" placeholder="Введите ID сервера">
-                    <button class="btn btn-secondary" id="joinServerBtn">
-                        Подключиться
-                    </button>
-                </div>
-                <div id="joinError" class="error-message"></div>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark">PC</span>
+            <div>
+                <div class="brand-title">BASIC Sandbox</div>
+                <div class="brand-subtitle">Сетевая песочница с BASIC-скриптами</div>
             </div>
         </div>
-    </div>
-    
-    <div class="logout-section">
-        <button class="btn btn-outline" id="logoutBtn">
-            Выйти из аккаунта
-        </button>
-    </div>
+
+        <div class="topbar-actions">
+            <div class="user-pill">Игрок: <strong id="username">...</strong></div>
+            <button class="ghost-button" id="logoutBtn" type="button">Выйти</button>
+        </div>
+    </header>
+
+    <main class="dashboard">
+        <section class="hero-card">
+            <div>
+                <p class="eyebrow">Лобби</p>
+                <h1>Создайте мир, поднимите сервер и переходите в сцену</h1>
+                <p class="hero-copy">
+                    Здесь вы создаёте мир, запускаете сервер
+                    и подключаетесь к нему как к общей игровой сессии. 
+                </p>
+            </div>
+
+            <div class="quick-join-card">
+                <h2>Подключение по коду</h2>
+                <p>Введите код игрового сервера, который создал другой пользователь.</p>
+                <form id="joinServerForm" class="stack-form">
+                    <input id="serverCodeInput" type="text" maxlength="12" placeholder="Например, B9BWK9" required>
+                    <button class="primary-button" type="submit">Войти в сервер</button>
+                </form>
+                <div class="inline-message error" id="joinError"></div>
+            </div>
+        </section>
+
+        <section class="workspace-grid">
+            <article class="panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="eyebrow">Новый мир</p>
+                        <h2>Создание мира</h2>
+                    </div>
+                </div>
+
+                <form id="createWorldForm" class="stack-form">
+                    <label class="field">
+                        <span>Название мира</span>
+                        <input id="worldNameInput" type="text" minlength="3" maxlength="50" placeholder="Мой мир" required>
+                    </label>
+
+                    <label class="field">
+                        <span>Seed мира</span>
+                        <input id="worldSeedInput" type="text" maxlength="100" placeholder="Оставьте пустым для случайного">
+                    </label>
+
+                    <button class="primary-button" type="submit">Создать мир</button>
+                </form>
+
+                <div class="inline-message success" id="worldSuccess"></div>
+                <div class="inline-message error" id="worldError"></div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-header panel-header-inline">
+                    <div>
+                        <p class="eyebrow">Ваши миры</p>
+                        <h2>Готовые миры</h2>
+                    </div>
+                    <button class="ghost-button dark" id="refreshWorldsBtn" type="button">Обновить</button>
+                </div>
+
+                <div id="worldList" class="world-list"></div>
+            </article>
+        </section>
+    </main>
+
+    <template id="worldCardTemplate">
+        <article class="world-card">
+            <div class="world-card-main">
+                <div class="world-card-top">
+                    <h3 class="world-name"></h3>
+                    <span class="world-seed"></span>
+                </div>
+                <div class="world-meta"></div>
+            </div>
+            <div class="world-actions">
+                <button class="primary-button create-server-button" type="button">Запустить сервер</button>
+            </div>
+            <div class="server-card hidden">
+                <div class="server-info"></div>
+                <div class="server-actions">
+                    <button class="ghost-button dark open-server-button" type="button">Открыть сцену</button>
+                </div>
+            </div>
+        </article>
+    </template>
+
+    <script type="module" src="/js/lobby.js"></script>
 </body>
 </html>

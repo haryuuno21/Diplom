@@ -1,209 +1,495 @@
+from __future__ import annotations
+
 import asyncio
+from dataclasses import dataclass
 import time
-from typing import Dict, List, Optional
-from gameClasses import GameServer, World, PlayerState
-import socketio
+from typing import Awaitable, Callable
+
+from apiModels import SessionUser
+from basicRuntime import BasicRuntimeError, BasicScriptRuntime, BasicScriptCancelledError
+from gameClasses import (
+    DIRECTION_TO_RUSSIAN,
+    MODE_TO_RUSSIAN,
+    MAX_PLAYER_HEALTH,
+    GameServer,
+    PlayerState,
+)
+from worldRuntime import WorldRuntime
+
+
+StateChangeCallback = Callable[[dict, dict], Awaitable[None]]
+
+
+@dataclass
+class ScheduledPlayerAction:
+    sid: str
+    execute_at_tick: int
+    future: asyncio.Future
+    operation: Callable[[PlayerState], object | None]
+
 
 class GameServerManager:
-    """Управляет игровым циклом конкретного сервера"""
-    
-    def __init__(self, server: GameServer, sio: socketio.AsyncServer):
+    def __init__(
+        self,
+        server: GameServer,
+        *,
+        manual_action_tick_cost: int = 1,
+        script_action_tick_cost: int = 0,
+        tick_interval_seconds: float = 0.05,
+    ):
         self.server = server
-        self.sio = sio
-        self.running = True
-        self.tick_count = 0
-        self.last_tick_time = time.time()
-    
-    async def game_loop(self):
-        """Основной игровой цикл"""
-        try:
-            while self.running:
-                # Обновляем мир
-                await self.update_world()
-                
-                # Рассылаем обновления игрокам
-                await self.broadcast_world_update()
-                
-                # Инкрементируем тик
-                self.tick_count += 1
-                
-                # Ждем следующего тика (20 тиков/сек = 50мс)
-                await asyncio.sleep(1/20)
-        except asyncio.CancelledError:
-            print(f"Game loop for server {self.server.server_code} cancelled")
-        except Exception as e:
-            print(f"Error in game loop for server {self.server.server_code}: {e}")
-            self.running = False
-    
-    async def update_world(self):
-        """Обновляет состояние мира"""
-        # Здесь будет ваша игровая логика
-        # Например: обработка скриптов, физика, события и т.д.
-        
-        # Пример: обновление времени в мире
-        self.server.world.tick += 1
-        
-        # Пример: обработка действий игроков
-        # for player in self.players.values():
-        #     if player.current_script:
-        #         await self.execute_player_script(player)
-    
-    async def broadcast_world_update(self):
-        """Рассылает обновление состояния всем игрокам сервера"""
-        # Формируем данные для отправки
-        world_data = {
-            "tick": self.server.world.tick,
-            "blocks": self.server.world.get_changed_blocks_since_last_update(),
-            "players": [player.to_dict() for player in self.players.values()]
-        }
-        
-        # Рассылаем всем игрокам в комнате сервера
-        await self.sio.emit(
-            "world_update",
-            world_data,
-            room=self.server.server_code
-        )
-    
-    async def add_player(self, sid: str, player_state: PlayerState):
-        """Добавляет игрока на сервер"""
-        self.server.players[sid] = player_state
-        
-        # Отправляем текущее состояние мира новому игроку
-        await self.sio.emit(
-            "world_state",
-            self.server.world.to_dict(),
-            to=sid
-        )
-        
-        # Уведомляем других игроков о новом игроке
-        await self.sio.emit(
-            "player_joined",
-            {"player_id": sid, "username": player_state.username},
-            room=self.server.server_code,
-            skip_sid=sid
-        )
-    
-    async def remove_player(self, sid: str):
-        """Удаляет игрока с сервера"""
-        if sid in self.players:
-            player_state = self.players.pop(sid)
-            
-            # Уведомляем других игроков
-            await self.sio.emit(
-                "player_left",
-                {"player_id": sid},
-                room=self.server.server_code
-            )
-    
-    async def handle_player_action(self, sid: str, action_data: dict):
-        """Обрабатывает действие игрока"""
-        if sid not in self.players:
+        self.runtime = WorldRuntime(server.world.world_state)
+        self.script_runtime = BasicScriptRuntime()
+        self.chat_history: list[dict] = []
+        self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+        self._running = False
+        self.manual_action_tick_cost = max(1, int(manual_action_tick_cost))
+        self.script_action_tick_cost = max(0, int(script_action_tick_cost))
+        self.tick_interval_seconds = float(tick_interval_seconds)
+        self._active_script_players: set[str] = set()
+        self._pending_actions: list[ScheduledPlayerAction] = []
+        self._script_cancel_events: dict[str, asyncio.Event] = {}
+
+    def start(self) -> None:
+        if self._task and not self._task.done():
             return
-        
-        action_type = action_data.get("action")
-        
-        if action_type == "move":
-            await self.handle_player_move(sid, action_data)
-        elif action_type == "rotate":
-            await self.handle_player_rotate(sid, action_data)
-        elif action_type == "interact":
-            await self.handle_player_interact(sid, action_data)
-        # ... другие действия
-    
-    async def handle_player_move(self, sid: str, action_data: dict):
-        """Обрабатывает движение игрока"""
-        player = self.players[sid]
-        direction = action_data.get("direction")
-        
-        # Проверяем, можно ли двигаться в этом направлении
-        new_position = self.calculate_new_position(player.position, direction)
-        
-        if self.server.world.can_move_to(new_position):
-            player.position = new_position
-            await self.broadcast_player_update(sid, player)
-    
-    async def handle_player_rotate(self, sid: str, action_data: dict):
-        """Обрабатывает поворот игрока"""
-        player = self.players[sid]
-        rotation = action_data.get("rotation")
-        
-        player.rotation = rotation
-        await self.broadcast_player_update(sid, player)
-    
-    async def handle_player_interact(self, sid: str, action_data: dict):
-        """Обрабатывает взаимодействие игрока с миром"""
-        player = self.players[sid]
-        block_position = action_data.get("position")
-        action = action_data.get("action")  # "break" или "place"
-        
-        if action == "break":
-            self.server.world.break_block(block_position)
-        elif action == "place":
-            block_type = action_data.get("block_type")
-            self.server.world.place_block(block_position, block_type)
-        
-        # Рассылаем обновление блоков
-        await self.broadcast_world_update()
-    
-    async def broadcast_player_update(self, sid: str, player: PlayerState):
-        """Рассылает обновление состояния игрока"""
-        player_data = player.to_dict()
-        player_data["player_id"] = sid
-        
-        await self.sio.emit(
-            "player_update",
-            player_data,
-            room=self.server.server_code
-        )
-    
-    def calculate_new_position(self, position: tuple, direction: str) -> tuple:
-        """Вычисляет новую позицию на основе направления"""
-        x, y, z = position
-        
-        if direction == "forward":
-            if self.players[position].rotation == "N":
-                z += 1
-            elif self.players[position].rotation == "S":
-                z -= 1
-            elif self.players[position].rotation == "W":
-                x -= 1
-            elif self.players[position].rotation == "E":
-                x += 1
-        elif direction == "backward":
-            # Обратное движение
+        self._running = True
+        self._task = asyncio.create_task(self._game_loop())
+
+    async def _game_loop(self) -> None:
+        try:
+            while self._running:
+                completed_actions: list[tuple[asyncio.Future, tuple | None, Exception | None]] = []
+                async with self._lock:
+                    self.server.world.world_state.tick += 1
+
+                    ready_actions = [
+                        action
+                        for action in self._pending_actions
+                        if action.execute_at_tick <= self.server.world.world_state.tick
+                    ]
+                    self._pending_actions = [
+                        action
+                        for action in self._pending_actions
+                        if action.execute_at_tick > self.server.world.world_state.tick
+                    ]
+
+                    for action in ready_actions:
+                        if action.future.cancelled():
+                            continue
+
+                        player = self.server.players.get(action.sid)
+                        if not player:
+                            completed_actions.append(
+                                (
+                                    action.future,
+                                    None,
+                                    BasicRuntimeError("Script interrupted because player disconnected"),
+                                )
+                            )
+                            continue
+
+                        try:
+                            operation_result = action.operation(player)
+                            completed_actions.append(
+                                (
+                                    action.future,
+                                    (
+                                        self._build_state_payload(action.sid),
+                                        player.to_public_dict(action.sid),
+                                        operation_result,
+                                    ),
+                                    None,
+                                )
+                            )
+                        except Exception as exc:
+                            completed_actions.append((action.future, None, exc))
+
+                    if self.server.world.world_state.tick % 20 == 0:
+                        for player in self.server.players.values():
+                            self.runtime.apply_environment_damage(player)
+
+                for future, payload, error in completed_actions:
+                    if future.done():
+                        continue
+                    if error is not None:
+                        future.set_exception(error)
+                    else:
+                        future.set_result(payload)
+                await asyncio.sleep(self.tick_interval_seconds)
+        except asyncio.CancelledError:
             pass
-        # ... другие направления
-        
-        return (x, y, z)
-    
-    async def stop(self):
-        """Останавливает игровой цикл"""
-        self.running = False
-        
-        # Уведомляем всех игроков о завершении сервера
-        await self.sio.emit(
-            "server_stopped",
-            {"message": "Server is shutting down"},
-            room=self.server.server_code
+
+    async def stop(self) -> None:
+        self._running = False
+        pending = self._pending_actions
+        self._pending_actions = []
+        self._script_cancel_events.clear()
+        for action in pending:
+            if not action.future.done():
+                action.future.set_exception(BasicRuntimeError("Server stopped before action execution"))
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    async def add_player(self, sid: str, user: SessionUser) -> PlayerState:
+        async with self._lock:
+            if sid in self.server.players:
+                return self.server.players[sid]
+            if len(self.server.players) >= self.server.max_players:
+                raise ValueError("Server is full")
+
+            spawn_point = self.server.world.world_state.spawn_point
+            player = PlayerState(
+                user_id=user.id,
+                username=user.username,
+                position=spawn_point,
+            )
+            self.server.players[sid] = player
+            self.server.status = "active"
+            return player
+
+    async def remove_player(self, sid: str) -> bool:
+        interrupted_actions: list[ScheduledPlayerAction] = []
+        async with self._lock:
+            self._active_script_players.discard(sid)
+            self._script_cancel_events.pop(sid, None)
+            remaining_actions: list[ScheduledPlayerAction] = []
+            for action in self._pending_actions:
+                if action.sid == sid:
+                    interrupted_actions.append(action)
+                else:
+                    remaining_actions.append(action)
+            self._pending_actions = remaining_actions
+            self.server.players.pop(sid, None)
+            self.server.status = "active" if self.server.players else "waiting"
+
+        for action in interrupted_actions:
+            if not action.future.done():
+                action.future.set_exception(BasicRuntimeError("Script interrupted because player disconnected"))
+
+        return not self.server.players
+
+    async def move_player(self, sid: str, direction: str) -> tuple[dict, dict]:
+        state, public_state, _ = await self._schedule_player_action(
+            sid,
+            self.manual_action_tick_cost,
+            lambda player: self.runtime.move_player(player, direction),
         )
-        
-        print(f"Server {self.server.server_code} stopped")
-    
-    def get_player_count(self) -> int:
-        """Возвращает количество игроков на сервере"""
-        return len(self.players)
-    
-    def is_empty(self) -> bool:
-        """Проверяет, пуст ли сервер"""
-        return len(self.players) == 0
-    
-    def get_server_info(self) -> dict:
-        """Возвращает информацию о сервере"""
-        return {
+        return state, public_state
+
+    async def turn_player(self, sid: str, direction: str) -> tuple[dict, dict]:
+        state, public_state, _ = await self._schedule_player_action(
+            sid,
+            self.manual_action_tick_cost,
+            lambda player: self.runtime.turn_player(player, direction),
+        )
+        return state, public_state
+
+    async def heal_player(self, sid: str) -> tuple[dict, dict]:
+        state, public_state, _ = await self._schedule_player_action(
+            sid,
+            self.manual_action_tick_cost,
+            lambda player: self.runtime.heal_player(player),
+        )
+        return state, public_state
+
+    async def restart_player(self, sid: str) -> tuple[dict, dict]:
+        def _restart(player: PlayerState) -> None:
+            player.position = self.server.world.world_state.spawn_point
+            player.direction = "north"
+            player.health = MAX_PLAYER_HEALTH
+            player.mode = "manual"
+            player.going_circles = False
+
+        state, public_state, _ = await self._schedule_player_action(
+            sid,
+            self.manual_action_tick_cost,
+            _restart,
+        )
+        return state, public_state
+
+    async def execute_script(
+        self,
+        sid: str,
+        script_text: str,
+        *,
+        on_state_change: StateChangeCallback | None = None,
+    ) -> tuple[dict, dict, dict]:
+        async with self._lock:
+            if sid in self._active_script_players:
+                raise ValueError("A script is already running for this player")
+
+            player = self._require_player(sid)
+            self._active_script_players.add(sid)
+            cancel_event = asyncio.Event()
+            self._script_cancel_events[sid] = cancel_event
+            player.mode = "automatic"
+            player.going_circles = False
+
+        async def move(direction: str):
+            state, public_state, _ = await self._schedule_player_action(
+                sid,
+                self.script_action_tick_cost,
+                lambda current_player: self.runtime.move_player(current_player, direction),
+            )
+            await self._emit_state_change_if_needed(sid, state, public_state, on_state_change)
+            return "ok"
+
+        async def turn(direction: str):
+            state, public_state, _ = await self._schedule_player_action(
+                sid,
+                self.script_action_tick_cost,
+                lambda current_player: self.runtime.turn_player(current_player, direction),
+            )
+            await self._emit_state_change_if_needed(sid, state, public_state, on_state_change)
+            return "ok"
+
+        async def heal():
+            state, public_state, current_health = await self._schedule_player_action(
+                sid,
+                self.script_action_tick_cost,
+                lambda current_player: self.runtime.heal_player(current_player) or current_player.health,
+            )
+            await self._emit_state_change_if_needed(sid, state, public_state, on_state_change)
+            return current_health if current_health is not None else state.get("health")
+
+        async def get_robot_coordinates():
+            async with self._lock:
+                current_player = self._require_script_player(sid)
+                return list(current_player.position)
+
+        async def get_robot_location():
+            async with self._lock:
+                current_player = self._require_script_player(sid)
+                return self.runtime.get_current_location(current_player)
+
+        async def get_block(position_name: str, eyelevel: bool):
+            async with self._lock:
+                current_player = self._require_script_player(sid)
+                return self.runtime.get_block_in_direction(current_player, position_name.lower(), bool(eyelevel))
+
+        async def depth(position_name: str):
+            async with self._lock:
+                current_player = self._require_script_player(sid)
+                return self.runtime.depth(current_player, position_name.lower())
+
+        async def addtree(x: int, y: int, z: int):
+            state, public_state, result = await self._schedule_player_action(
+                sid,
+                self.script_action_tick_cost,
+                lambda _current_player: self.runtime.add_tree(int(x), int(y), int(z)),
+            )
+            await self._emit_state_change_if_needed(sid, state, public_state, on_state_change)
+            return result
+
+        callbacks = {
+            "MOVE": move,
+            "TURN": turn,
+            "HEAL": heal,
+            "GET_ROBOT_COORDINATES": get_robot_coordinates,
+            "GET_ROBOT_LOCATION": get_robot_location,
+            "GET_BLOCK": get_block,
+            "DEPTH": depth,
+            "ADDTREE": addtree,
+        }
+
+        result = await self.script_runtime.execute(
+            script_text,
+            callbacks,
+            cancel_requested=cancel_event.is_set,
+        )
+
+        async with self._lock:
+            self._active_script_players.discard(sid)
+            self._script_cancel_events.pop(sid, None)
+            current_player = self.server.players.get(sid)
+            if current_player:
+                current_player.mode = "manual"
+                if not result.success and result.error and "loop iteration limit" in result.error.lower():
+                    current_player.going_circles = True
+                state = self._build_state_payload(sid)
+                public_state = current_player.to_public_dict(sid)
+            else:
+                state = {}
+                public_state = {}
+
+        script_result = {
+            "success": result.success,
+            "logs": result.logs,
+            "error": result.error,
+        }
+        return state, public_state, script_result
+
+    async def stop_script(self, sid: str) -> tuple[dict, dict] | None:
+        interrupted_actions: list[ScheduledPlayerAction] = []
+        async with self._lock:
+            if sid not in self._active_script_players:
+                return None
+
+            cancel_event = self._script_cancel_events.get(sid)
+            if cancel_event:
+                cancel_event.set()
+
+            remaining_actions: list[ScheduledPlayerAction] = []
+            for action in self._pending_actions:
+                if action.sid == sid:
+                    interrupted_actions.append(action)
+                else:
+                    remaining_actions.append(action)
+            self._pending_actions = remaining_actions
+
+            player = self.server.players.get(sid)
+            if not player:
+                return None
+            player.mode = "manual"
+            state = self._build_state_payload(sid)
+            public_state = player.to_public_dict(sid)
+
+        for action in interrupted_actions:
+            if not action.future.done():
+                action.future.set_exception(BasicScriptCancelledError("Script stopped by user"))
+
+        return state, public_state
+
+    async def _schedule_player_action(
+        self,
+        sid: str,
+        tick_cost: int,
+        operation: Callable[[PlayerState], object | None],
+    ) -> tuple[dict, dict, object | None]:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+
+        async with self._lock:
+            self._require_player(sid)
+            execute_at_tick = self.server.world.world_state.tick + max(1, int(tick_cost))
+            self._pending_actions.append(
+                ScheduledPlayerAction(
+                    sid=sid,
+                    execute_at_tick=execute_at_tick,
+                    future=future,
+                    operation=operation,
+                )
+            )
+
+        state, public_state, operation_result = await future
+        return state, public_state, operation_result
+
+    def _require_script_player(self, sid: str) -> PlayerState:
+        player = self.server.players.get(sid)
+        if not player:
+            raise BasicRuntimeError("Script interrupted because player disconnected")
+        return player
+
+    async def update_player_state(
+        self,
+        sid: str,
+        *,
+        position=None,
+        rotation=None,
+        health=None,
+    ) -> dict | None:
+        async with self._lock:
+            player = self.server.players.get(sid)
+            if not player:
+                return None
+            if position is not None:
+                player.position = tuple(position)
+            if rotation is not None:
+                normalized = str(rotation).lower()
+                if normalized in DIRECTION_TO_RUSSIAN:
+                    player.direction = normalized
+            if health is not None:
+                player.health = int(health)
+            return player.to_public_dict(sid)
+
+    def build_state_payload(self, sid: str) -> dict:
+        return self._build_state_payload(sid)
+
+    def build_world_payload(self, sid: str | None = None) -> dict:
+        payload = {
             "server_code": self.server.server_code,
             "server_id": self.server.server_id,
-            "world_id": self.server.world_id,
-            "player_count": self.get_player_count(),
-            "tick": self.server.world.tick,
-            "status": "active" if self.running else "stopped"
+            "world": self.server.world.to_dict(),
+            "players": [
+                player.to_public_dict(player_sid)
+                for player_sid, player in self.server.players.items()
+            ],
+            "chat_history": self.chat_history[-50:],
         }
+        if sid is not None and sid in self.server.players:
+            payload["self"] = self._build_state_payload(sid)
+        return payload
+
+    def build_tick_payload(self, sid: str) -> dict:
+        return {
+            "tick": self.server.world.world_state.tick,
+            "server_code": self.server.server_code,
+            "self": self._build_state_payload(sid),
+            "players": [
+                player.to_public_dict(player_sid)
+                for player_sid, player in self.server.players.items()
+            ],
+        }
+
+    def list_player_ids(self) -> list[str]:
+        return list(self.server.players.keys())
+
+    async def add_chat_message(self, sid: str, payload: dict | str) -> dict:
+        async with self._lock:
+            player = self._require_player(sid)
+            if isinstance(payload, str):
+                payload = {"message": payload}
+
+            message = {
+                "player_id": sid,
+                "user_id": player.user_id,
+                "username": player.username,
+                "message": str(payload.get("message", "")).strip(),
+                "script_name": payload.get("script_name"),
+                "script_content": payload.get("script_content"),
+                "timestamp": int(time.time() * 1000),
+            }
+            self.chat_history.append(message)
+            self.chat_history = self.chat_history[-50:]
+            return message
+
+    def _build_state_payload(self, sid: str) -> dict:
+        player = self._require_player(sid)
+        location = self.runtime.get_current_location(player)
+        return {
+            "coordinates": list(player.position),
+            "mode": MODE_TO_RUSSIAN[player.mode],
+            "mode_key": player.mode,
+            "direction": DIRECTION_TO_RUSSIAN[player.direction],
+            "direction_key": player.direction,
+            "health": player.health,
+            "temperature": self.runtime.get_temperature(player),
+            "location": location,
+            "nearLocations": self.runtime.get_near_locations(player),
+            "timestamp": int(time.time() * 1000),
+            "going_circles": player.going_circles,
+            "username": player.username,
+        }
+
+    async def _emit_state_change_if_needed(
+        self,
+        sid: str,
+        state: dict,
+        public_state: dict,
+        callback: StateChangeCallback | None,
+    ) -> None:
+        if callback is None:
+            return
+        await callback(state, public_state)
+
+    def _require_player(self, sid: str) -> PlayerState:
+        player = self.server.players.get(sid)
+        if not player:
+            raise ValueError("Player is not connected to this server")
+        return player

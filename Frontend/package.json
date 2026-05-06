@@ -1,0 +1,10 @@
+{
+  "name": "progcraft-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Static frontend assets for ProgCraft",
+  "dependencies": {
+    "socket.io-client": "^4.8.1",
+    "three": "^0.160.0"
+  }
+}

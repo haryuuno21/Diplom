@@ -1,97 +1,71 @@
-// Переключение между формами
-function showForm(formType) {
-  document
-    .getElementById("loginForm")
-    .classList.toggle("active", formType === "login");
-  document
-    .getElementById("registerForm")
-    .classList.toggle("active", formType === "register");
+import {
+  formatBackendError,
+  getCurrentUser,
+  loginUser,
+  registerUser,
+} from "/js/api.js";
 
-  // Очищаем ошибки при переключении
-  document.getElementById("loginError").textContent = "";
-  document.getElementById("registerError").textContent = "";
+const loginForm = document.getElementById("loginForm");
+const registerForm = document.getElementById("registerForm");
+const showLoginBtn = document.getElementById("showLoginBtn");
+const showRegisterBtn = document.getElementById("showRegisterBtn");
+const loginError = document.getElementById("loginError");
+const registerError = document.getElementById("registerError");
+
+function showForm(formType) {
+  const loginActive = formType === "login";
+  loginForm.classList.toggle("active", loginActive);
+  registerForm.classList.toggle("active", !loginActive);
+  showLoginBtn.classList.toggle("active", loginActive);
+  showRegisterBtn.classList.toggle("active", !loginActive);
+  loginError.textContent = "";
+  registerError.textContent = "";
 }
 
-// Обработка формы входа
-document
-  .getElementById("loginFormElement")
-  .addEventListener("submit", async (e) => {
-    e.preventDefault();
+showLoginBtn.addEventListener("click", () => showForm("login"));
+showRegisterBtn.addEventListener("click", () => showForm("register"));
 
-    const username = document.getElementById("loginUsername").value.trim();
-    const password = document.getElementById("loginPassword").value;
-    const errorDiv = document.getElementById("loginError");
+document.getElementById("loginFormElement").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginError.textContent = "";
 
-    try {
-      const response = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
 
-      const data = await response.json();
+  try {
+    await loginUser(username, password);
+    window.location.href = "/index.html";
+  } catch (error) {
+    loginError.textContent = formatBackendError(error);
+  }
+});
 
-      if (response.ok) {
-        // Сохраняем имя пользователя и редиректим
-        localStorage.setItem("username", username);
-        window.location.href = "/index.html";
-      } else {
-        errorDiv.textContent = data.detail || data.error || "Ошибка входа";
-      }
-    } catch (error) {
-      console.error("Login error:", error);
-      errorDiv.textContent = "Ошибка подключения к серверу";
-    }
-  });
+document.getElementById("registerFormElement").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  registerError.textContent = "";
 
-// Обработка формы регистрации
-document
-  .getElementById("registerFormElement")
-  .addEventListener("submit", async (e) => {
-    e.preventDefault();
+  const username = document.getElementById("registerUsername").value.trim();
+  const password = document.getElementById("registerPassword").value;
+  const confirmPassword = document.getElementById("registerConfirmPassword").value;
 
-    const username = document.getElementById("registerUsername").value.trim();
-    const password = document.getElementById("registerPassword").value;
-    const confirmPassword = document.getElementById(
-      "registerConfirmPassword",
-    ).value;
-    const errorDiv = document.getElementById("registerError");
+  if (password !== confirmPassword) {
+    registerError.textContent = "Пароли не совпадают.";
+    return;
+  }
 
-    // Валидация на клиенте
-    if (password !== confirmPassword) {
-      errorDiv.textContent = "Пароли не совпадают";
-      return;
-    }
+  try {
+    await registerUser(username, password);
+    window.location.href = "/index.html";
+  } catch (error) {
+    registerError.textContent = formatBackendError(error);
+  }
+});
 
-    if (username.length < 3) {
-      errorDiv.textContent = "Имя пользователя должно быть не менее 3 символов";
-      return;
-    }
-
-    if (password.length < 6) {
-      errorDiv.textContent = "Пароль должен быть не менее 6 символов";
-      return;
-    }
-
-    try {
-      const response = await fetch("/api/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // Автоматически логиним после регистрации
-        localStorage.setItem("username", username);
-        window.location.href = "/index.html";
-      } else {
-        errorDiv.textContent =
-          data.detail || data.error || "Ошибка регистрации";
-      }
-    } catch (error) {
-      console.error("Register error:", error);
-      errorDiv.textContent = "Ошибка подключения к серверу";
-    }
-  });
+try {
+  await getCurrentUser();
+  window.location.href = "/index.html";
+} catch (error) {
+  if (error?.status && error.status !== 401) {
+    loginError.textContent = formatBackendError(error);
+  }
+}

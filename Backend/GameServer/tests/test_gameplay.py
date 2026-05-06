@@ -1,0 +1,176 @@
+import asyncio
+import time
+import unittest
+
+from basicRuntime import BasicScriptRuntime
+from gameClasses import GameServer, World
+from gameServerManager import GameServerManager
+from worldGenerator import WorldGenerator
+
+
+class GameplayTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        world_state = WorldGenerator().generate_world("test-seed")
+        world = World(
+            world_id=1,
+            world_name="Test World",
+            world_seed="test-seed",
+            world_creator_id=1,
+            world_created_at=0.0,
+            last_modified=0.0,
+            world_state=world_state,
+        )
+        self.manager = GameServerManager(
+            GameServer(world=world, host_id=1, max_players=4, server_code="ABC123")
+        )
+        self.manager.start()
+
+        class User:
+            id = 1
+            username = "tester"
+
+        self.user = User()
+        await self.manager.add_player("sid1", self.user)
+
+        class UserTwo:
+            id = 2
+            username = "tester_two"
+
+        self.user_two = UserTwo()
+        await self.manager.add_player("sid2", self.user_two)
+
+    async def asyncTearDown(self):
+        await self.manager.stop()
+
+    async def test_tick_payload_contains_self_and_players(self):
+        payload = self.manager.build_tick_payload("sid1")
+        self.assertIn("self", payload)
+        self.assertIn("players", payload)
+        self.assertEqual(payload["players"][0]["username"], "tester")
+        self.assertEqual(len(payload["players"]), 2)
+
+    async def test_legacy_depth_script_executes(self):
+        state, _, result = await self.manager.execute_script(
+            "sid1",
+            'WHILE(DEPTH("front") = 0)\n    MOVE("forward")\nEND WHILE',
+        )
+        self.assertTrue(result["success"], result["error"])
+        self.assertIn("coordinates", state)
+
+    async def test_endless_script_is_stopped(self):
+        self.manager.script_runtime.max_loop_iterations = 20
+        _, _, result = await self.manager.execute_script(
+            "sid1",
+            'WHILE(1=1)\n    MOVE("forward")\n    MOVE("backward")\nEND WHILE',
+        )
+        self.assertFalse(result["success"])
+        self.assertIn("loop iteration limit", result["error"].lower())
+
+    async def test_chat_message_is_saved(self):
+        message = await self.manager.add_chat_message("sid1", {"message": "hello"})
+        self.assertEqual(message["message"], "hello")
+        payload = self.manager.build_world_payload("sid1")
+        self.assertEqual(payload["chat_history"][-1]["message"], "hello")
+
+    async def test_script_does_not_block_other_player_or_ticks(self):
+        self.manager.script_action_tick_cost = 2
+        start_tick = self.manager.server.world.world_state.tick
+
+        script_task = asyncio.create_task(
+            self.manager.execute_script(
+                "sid1",
+                'FOR I = 1 TO 4\n    TURN("right")\nNEXT',
+            )
+        )
+
+        await asyncio.sleep(0.03)
+        other_state_before = self.manager.build_state_payload("sid2")
+        other_state_after, _ = await self.manager.turn_player("sid2", "right")
+
+        await asyncio.sleep(0.12)
+        middle_tick = self.manager.server.world.world_state.tick
+        self.assertGreater(middle_tick, start_tick)
+        self.assertNotEqual(other_state_before["direction_key"], other_state_after["direction_key"])
+
+        _, _, result = await script_task
+        self.assertTrue(result["success"], result["error"])
+
+    async def test_players_can_run_scripts_in_parallel(self):
+        self.manager.script_action_tick_cost = 2
+        started_at = time.monotonic()
+
+        first_task = asyncio.create_task(
+            self.manager.execute_script(
+                "sid1",
+                'FOR I = 1 TO 2\n    TURN("right")\nNEXT',
+            )
+        )
+        second_task = asyncio.create_task(
+            self.manager.execute_script(
+                "sid2",
+                'FOR I = 1 TO 2\n    TURN("left")\nNEXT',
+            )
+        )
+
+        first_result, second_result = await asyncio.gather(first_task, second_task)
+        elapsed = time.monotonic() - started_at
+
+        self.assertTrue(first_result[2]["success"], first_result[2]["error"])
+        self.assertTrue(second_result[2]["success"], second_result[2]["error"])
+        self.assertLess(elapsed, 0.35)
+
+    async def test_script_can_be_stopped(self):
+        self.manager.script_action_tick_cost = 2
+
+        script_task = asyncio.create_task(
+            self.manager.execute_script(
+                "sid1",
+                'WHILE(1=1)\n    TURN("right")\nEND WHILE',
+            )
+        )
+
+        await asyncio.sleep(0.08)
+        stop_result = await self.manager.stop_script("sid1")
+        self.assertIsNotNone(stop_result)
+
+        state, _public_state, result = await script_task
+        self.assertFalse(result["success"])
+        self.assertIn("stopped by user", result["error"].lower())
+        self.assertEqual(state["mode_key"], "manual")
+
+
+class BasicRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_basic_runtime_handles_assignment_and_loop(self):
+        runtime = BasicScriptRuntime(max_loop_iterations=10)
+        counter = {"value": 0}
+
+        async def move(direction):
+            counter["value"] += 1
+            return direction
+
+        async def depth(position):
+            return 0 if counter["value"] < 2 else 1
+
+        async def noop(*args, **kwargs):
+            return None
+
+        result = await runtime.execute(
+            'X = 1\nWHILE(DEPTH("front") = 0)\n    MOVE("forward")\n    X = X + 1\nEND WHILE',
+            {
+                "MOVE": move,
+                "TURN": noop,
+                "HEAL": noop,
+                "GET_ROBOT_COORDINATES": noop,
+                "GET_ROBOT_LOCATION": noop,
+                "GET_BLOCK": noop,
+                "DEPTH": depth,
+                "ADDTREE": noop,
+            },
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(counter["value"], 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
