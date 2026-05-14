@@ -10,7 +10,6 @@
     <div class="game-shell">
         <aside class="sidebar">
             <section class="sidebar-card">
-                <p class="eyebrow">Сессия</p>
                 <h1>Игровой сервер</h1>
                 <div class="session-meta">
                     <div>Код сервера: <strong id="serverCodeLabel">...</strong></div>
@@ -24,7 +23,6 @@
             </section>
 
             <section class="sidebar-card">
-                <p class="eyebrow">Статус</p>
                 <div class="stats-grid" id="statsGrid">
                     <div class="stat"><span>Координаты</span><strong id="coordsValue">-</strong></div>
                     <div class="stat"><span>Направление</span><strong id="directionValue">-</strong></div>
@@ -39,16 +37,6 @@
             </section>
 
             <section class="sidebar-card">
-                <p class="eyebrow">Управление</p>
-                <ul class="control-list">
-                    <li><strong>W A S D</strong> — движение</li>
-                    <li><strong>Q / E</strong> — поворот</li>
-                    <li><strong>H</strong> — лечение</li>
-                    <li><strong>R</strong> — рестарт игрока</li>
-                </ul>
-            </section>
-
-            <section class="sidebar-card">
                 <div class="panel-header">
                     <div>
                         <p class="eyebrow">BASIC</p>
@@ -59,34 +47,38 @@
                         <button id="stopScriptBtn" class="ghost-button compact" type="button">Остановить</button>
                     </div>
                 </div>
+                <div class="script-upload-row">
+                    <label for="scriptFileInput" class="ghost-button compact file-picker-button">Загрузить скрипт</label>
+                    <input id="scriptFileInput" type="file" accept=".bas,.txt,text/plain" hidden>
+                    <button id="clearScriptFileBtn" class="ghost-button compact" type="button">Сбросить файл</button>
+                </div>
+                <div class="script-file-meta">
+                    <span id="scriptFileLabel">Файл не выбран</span>
+                </div>
                 <textarea id="scriptInput" class="script-input" spellcheck="false">WHILE(DEPTH("front") = 0)
     MOVE("forward")
 END WHILE</textarea>
                 <div class="inline-message" id="scriptMessage"></div>
             </section>
-
-            <section class="sidebar-card chat-card">
-                <div class="panel-header">
-                    <div>
-                        <p class="eyebrow">Чат</p>
-                        <h2>Игровой канал</h2>
-                    </div>
-                </div>
-                <div id="chatMessages" class="chat-messages"></div>
-                <form id="chatForm" class="chat-form">
-                    <input id="chatInput" type="text" maxlength="300" placeholder="Сообщение в сервер..." required>
-                    <button class="primary-button compact" type="submit">Отправить</button>
-                </form>
-            </section>
         </aside>
 
         <main class="scene-panel">
-            <div class="scene-toolbar">
-                <div class="toolbar-chip">Авторитетное состояние: backend</div>
-                <div class="toolbar-chip">Рендер: three.js</div>
-                <div class="toolbar-chip" id="connectionChip">Соединение...</div>
+            <div class="scene-layout">
+                <section class="scene-stage">
+                    <div id="sceneRoot" class="scene-root"></div>
+                </section>
+
+                <aside class="sidebar-card chat-card scene-chat">
+                    <div class="panel-header">
+                        <h2>Чат</h2>
+                    </div>
+                    <div id="chatMessages" class="chat-messages"></div>
+                    <form id="chatForm" class="chat-form">
+                        <input id="chatInput" type="text" maxlength="300" placeholder="Сообщение" required>
+                        <button class="primary-button compact" type="submit">Отправить</button>
+                    </form>
+                </aside>
             </div>
-            <div id="sceneRoot" class="scene-root"></div>
         </main>
     </div>
 

@@ -35,10 +35,14 @@ const chatMessages = document.getElementById("chatMessages");
 const chatForm = document.getElementById("chatForm");
 const chatInput = document.getElementById("chatInput");
 const scriptInput = document.getElementById("scriptInput");
+const scriptFileInput = document.getElementById("scriptFileInput");
+const clearScriptFileBtn = document.getElementById("clearScriptFileBtn");
+const scriptFileLabel = document.getElementById("scriptFileLabel");
 const runScriptBtn = document.getElementById("runScriptBtn");
 const stopScriptBtn = document.getElementById("stopScriptBtn");
 const leaveGameBtn = document.getElementById("leaveGameBtn");
 const copyServerCodeBtn = document.getElementById("copyServerCodeBtn");
+const ALLOWED_SCRIPT_EXTENSIONS = new Set([".bas", ".txt"]);
 
 const stats = {
   coords: document.getElementById("coordsValue"),
@@ -115,6 +119,7 @@ const state = {
   chatKeys: new Set(),
   robotAsset: null,
   robotAssetFailed: false,
+  selectedScriptFileName: null,
 };
 
 function toSceneCoordinates(coordinates, yOffset = 0) {
@@ -155,7 +160,25 @@ function setScriptStatus(message, kind = "") {
     kind === "error" ? "#ff9f91" : kind === "success" ? "#a7df9b" : "";
 }
 
+function getScriptExtension(fileName) {
+  const dotIndex = fileName.lastIndexOf(".");
+  return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : "";
+}
+
+function updateSelectedScriptFile(fileName = null) {
+  state.selectedScriptFileName = fileName;
+  scriptFileLabel.textContent = fileName || "Файл не выбран";
+}
+
+function clearSelectedScriptFile() {
+  updateSelectedScriptFile(null);
+  scriptFileInput.value = "";
+}
+
 function setConnectionState(text, kind = "neutral") {
+  if (!connectionChip) {
+    return;
+  }
   connectionChip.textContent = text;
   if (kind === "ok") {
     connectionChip.style.color = "#b7efb5";
@@ -214,7 +237,6 @@ async function loadRobotAsset() {
       animations: gltf.animations || [],
     };
     syncPlayers(state.players);
-    setStatus("Модель робота загружена.", "success");
   } catch (error) {
     state.robotAssetFailed = true;
     setStatus("Не удалось загрузить модель робота, использую запасную модель.", "error");
@@ -619,6 +641,36 @@ socket.on("runtime_error", (payload) => {
   setScriptStatus(payload?.error || "Ошибка игрового рантайма.", "error");
 });
 
+scriptFileInput.addEventListener("change", async (event) => {
+  const [file] = event.target.files || [];
+  if (!file) {
+    clearSelectedScriptFile();
+    return;
+  }
+
+  const extension = getScriptExtension(file.name);
+  if (!ALLOWED_SCRIPT_EXTENSIONS.has(extension)) {
+    clearSelectedScriptFile();
+    setScriptStatus("Поддерживаются только файлы .bas и .txt.", "error");
+    return;
+  }
+
+  try {
+    const scriptText = await file.text();
+    scriptInput.value = scriptText;
+    updateSelectedScriptFile(file.name);
+    setScriptStatus(`Файл ${file.name} загружен в редактор.`, "success");
+  } catch (error) {
+    clearSelectedScriptFile();
+    setScriptStatus("Не удалось прочитать выбранный файл.", "error");
+  }
+});
+
+clearScriptFileBtn.addEventListener("click", () => {
+  clearSelectedScriptFile();
+  setScriptStatus("Выбранный файл сброшен.");
+});
+
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const message = chatInput.value.trim();
@@ -636,6 +688,13 @@ runScriptBtn.addEventListener("click", () => {
     return;
   }
   setScriptStatus("Скрипт отправлен на сервер...");
+  if (state.selectedScriptFileName) {
+    socket.emit("exec", {
+      script_name: state.selectedScriptFileName,
+      script_content: scriptText,
+    });
+    return;
+  }
   socket.emit("exec", scriptText);
 });
 

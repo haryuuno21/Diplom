@@ -25,12 +25,15 @@ body {
     radial-gradient(circle at top left, rgba(93, 121, 71, 0.24), transparent 20%),
     radial-gradient(circle at top right, rgba(210, 125, 67, 0.18), transparent 24%),
     linear-gradient(180deg, #21251f, #171a16);
+  overflow: hidden;
 }
 
 .game-shell {
+  height: 100vh;
   min-height: 100vh;
   display: grid;
   grid-template-columns: minmax(340px, 430px) minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sidebar {
@@ -40,6 +43,7 @@ body {
   background: rgba(18, 20, 16, 0.72);
   border-right: 1px solid var(--line);
   overflow-y: auto;
+  min-height: 0;
 }
 
 .sidebar-card {
@@ -83,6 +87,27 @@ body {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.script-upload-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.85rem;
+}
+
+.file-picker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.script-file-meta {
+  margin-top: 0.55rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .ghost-button,
@@ -144,13 +169,6 @@ body {
   font-size: 0.98rem;
 }
 
-.control-list {
-  margin: 0.4rem 0 0;
-  padding-left: 1.2rem;
-  color: var(--muted);
-  line-height: 1.7;
-}
-
 .script-input,
 .chat-form input {
   width: 100%;
@@ -175,14 +193,18 @@ body {
 }
 
 .chat-messages {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.6rem;
-  max-height: 260px;
+  align-items: stretch;
+  align-content: flex-start;
   overflow-y: auto;
   padding-right: 0.2rem;
+  min-height: 0;
 }
 
 .chat-message {
+  flex: 0 0 auto;
   padding: 0.75rem;
   border-radius: 0.95rem;
   background: rgba(255, 255, 255, 0.04);
@@ -221,28 +243,29 @@ body {
 .scene-panel {
   min-width: 0;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: 1fr;
   padding: 1rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scene-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
   gap: 0.9rem;
+  overflow: hidden;
 }
 
-.scene-toolbar {
+.scene-stage {
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.7rem;
-}
-
-.toolbar-chip {
-  padding: 0.7rem 0.9rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--line);
-  color: var(--muted);
-  backdrop-filter: blur(10px);
 }
 
 .scene-root {
-  min-height: 70vh;
+  flex: 1;
+  min-height: 0;
   border-radius: 1.5rem;
   overflow: hidden;
   background:
@@ -253,19 +276,47 @@ body {
   position: relative;
 }
 
+.scene-chat {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+
 .scene-root canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 920px) {
+  body {
+    overflow: auto;
+  }
+
   .game-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     order: 2;
+    overflow: visible;
+  }
+
+  .scene-panel {
+    overflow: visible;
+  }
+
+  .scene-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 56vh) minmax(260px, 34vh);
+    overflow: visible;
+  }
+
+  .scene-stage {
+    min-height: 420px;
   }
 }
 
@@ -273,5 +324,13 @@ body {
   .stats-grid,
   .chat-form {
     grid-template-columns: 1fr;
+  }
+
+  .scene-layout {
+    grid-template-rows: minmax(360px, 50vh) minmax(240px, 32vh);
+  }
+
+  .scene-chat {
+    min-height: 240px;
   }
 }

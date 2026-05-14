@@ -352,7 +352,7 @@ class GameServerManager:
 
         for action in interrupted_actions:
             if not action.future.done():
-                action.future.set_exception(BasicScriptCancelledError("Script stopped by user"))
+                action.future.set_exception(BasicScriptCancelledError("Скрипт остановлен игроком"))
 
         return state, public_state
 

@@ -540,7 +540,7 @@ async def stop_script(sid):
     if not result:
         await sio.emit(
             "script_result",
-            {"status": "error", "logs": [], "error": "No active script to stop"},
+            {"status": "error", "logs": [], "error": "Нет запущенного скрипта для остановки"},
             to=sid,
         )
         return
@@ -549,7 +549,7 @@ async def stop_script(sid):
     await _emit_state_bundle(server_code, sid, state, public_state)
     await sio.emit(
         "script_result",
-        {"status": "stopped", "logs": [], "error": "Script stopped by user"},
+        {"status": "stopped", "logs": [], "error": "Скрипт остановлен игроком"},
         to=sid,
     )
 
