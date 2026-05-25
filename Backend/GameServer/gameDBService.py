@@ -7,7 +7,7 @@ from asyncpg.exceptions import UniqueViolationError
 from redis.asyncio import Redis
 
 from apiModels import GameServerResponse, SessionUser, WorldInfo, WorldListResponse
-from database import SERVER_EXPIRE_SECONDS
+from database import PLAYER_STATE_EXPIRE_SECONDS, SERVER_EXPIRE_SECONDS
 from gameClasses import GameServer, World, WorldState
 
 
@@ -266,6 +266,66 @@ class GameDBService:
     async def delete_active_server(self, server_code: str) -> None:
         await self.redis_client.delete(f"server:{server_code}")
 
+    async def store_player_state(
+        self,
+        world_id: int,
+        user_id: int,
+        snapshot: dict,
+        *,
+        persist_to_postgres: bool = False,
+    ) -> None:
+        payload = json.dumps(snapshot)
+        await self.redis_client.setex(
+            self._player_state_key(world_id, user_id),
+            PLAYER_STATE_EXPIRE_SECONDS,
+            payload,
+        )
+        if persist_to_postgres:
+            await self._upsert_player_state(world_id, user_id, snapshot)
+
+    async def get_player_state(self, world_id: int, user_id: int) -> Optional[dict]:
+        cache_key = self._player_state_key(world_id, user_id)
+        payload = await self.redis_client.get(cache_key)
+        if payload:
+            return _coerce_json(payload)
+
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT player_state
+                FROM player_states
+                WHERE world_id = $1 AND user_id = $2
+                """,
+                world_id,
+                user_id,
+            )
+        if not row:
+            return None
+
+        snapshot = _coerce_json(row["player_state"])
+        await self.redis_client.setex(
+            cache_key,
+            PLAYER_STATE_EXPIRE_SECONDS,
+            json.dumps(snapshot),
+        )
+        return snapshot
+
+    async def delete_player_state(self, world_id: int, user_id: int) -> None:
+        await self.redis_client.delete(self._player_state_key(world_id, user_id))
+
+    async def persist_player_state(
+        self,
+        world_id: int,
+        user_id: int,
+        snapshot: dict,
+    ) -> None:
+        await self.store_player_state(
+            world_id,
+            user_id,
+            snapshot,
+            persist_to_postgres=True,
+        )
+
     def _row_to_world(self, row) -> World:
         state_payload = _coerce_json(row["world_state"])
         return World(
@@ -277,3 +337,24 @@ class GameDBService:
             last_modified=_to_epoch(row["last_modified"]),
             world_state=WorldState.from_dict(state_payload),
         )
+
+    async def _upsert_player_state(self, world_id: int, user_id: int, snapshot: dict) -> None:
+        async with self.db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO player_states (world_id, user_id, server_code, player_state)
+                VALUES ($1, $2, $3, $4::jsonb)
+                ON CONFLICT (world_id, user_id) DO UPDATE
+                SET server_code = EXCLUDED.server_code,
+                    player_state = EXCLUDED.player_state,
+                    updated_at = NOW()
+                """,
+                world_id,
+                user_id,
+                str(snapshot.get("server_code", "")),
+                json.dumps(snapshot),
+            )
+
+    @staticmethod
+    def _player_state_key(world_id: int, user_id: int) -> str:
+        return f"player_state:world:{world_id}:user:{user_id}"

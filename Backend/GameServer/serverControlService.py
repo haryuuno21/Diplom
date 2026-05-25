@@ -45,7 +45,9 @@ class ServerControlService:
 
     async def add_player(self, server_code: str, sid: str, user: SessionUser) -> dict:
         manager = self._require_manager(server_code)
-        await manager.add_player(sid, user)
+        restored_state = await self.game_db_service.get_player_state(manager.server.world.world_id, user.id)
+        await manager.add_player(sid, user, restored_state=restored_state)
+        await self._persist_player_snapshot(manager, sid)
         await self._store_and_build_response(manager)
         return manager.build_world_payload(sid)
 
@@ -54,7 +56,9 @@ class ServerControlService:
         if not manager:
             return False
 
-        should_stop = await manager.remove_player(sid)
+        should_stop, snapshot = await manager.remove_player(sid)
+        if snapshot is not None:
+            await self._persist_snapshot(manager, snapshot, persist_to_postgres=True)
         if should_stop:
             await self.stop_server(server_code)
             return True
@@ -65,24 +69,28 @@ class ServerControlService:
     async def move_player(self, server_code: str, sid: str, direction: str) -> tuple[dict, dict]:
         manager = self._require_manager(server_code)
         state, public_state = await manager.move_player(sid, direction)
+        await self._persist_player_snapshot(manager, sid)
         await self._store_and_build_response(manager)
         return state, public_state
 
     async def turn_player(self, server_code: str, sid: str, direction: str) -> tuple[dict, dict]:
         manager = self._require_manager(server_code)
         state, public_state = await manager.turn_player(sid, direction)
+        await self._persist_player_snapshot(manager, sid)
         await self._store_and_build_response(manager)
         return state, public_state
 
     async def heal_player(self, server_code: str, sid: str) -> tuple[dict, dict]:
         manager = self._require_manager(server_code)
         state, public_state = await manager.heal_player(sid)
+        await self._persist_player_snapshot(manager, sid)
         await self._store_and_build_response(manager)
         return state, public_state
 
     async def restart_player(self, server_code: str, sid: str) -> tuple[dict, dict]:
         manager = self._require_manager(server_code)
         state, public_state = await manager.restart_player(sid)
+        await self._persist_player_snapshot(manager, sid)
         await self._store_and_build_response(manager)
         return state, public_state
 
@@ -100,6 +108,7 @@ class ServerControlService:
             script_text,
             on_state_change=on_state_change,
         )
+        await self._persist_player_snapshot(manager, sid)
         await self._store_and_build_response(manager)
         return state, public_state, script_result
 
@@ -107,6 +116,7 @@ class ServerControlService:
         manager = self._require_manager(server_code)
         result = await manager.stop_script(sid)
         if result is not None:
+            await self._persist_player_snapshot(manager, sid)
             await self._store_and_build_response(manager)
         return result
 
@@ -122,6 +132,7 @@ class ServerControlService:
             health=payload.get("health"),
         )
         if updated is not None:
+            await self._persist_player_snapshot(manager, sid)
             await self._store_and_build_response(manager)
         return updated
 
@@ -156,6 +167,7 @@ class ServerControlService:
             await self.game_db_service.delete_active_server(server_code)
             return
 
+        await self._persist_all_player_snapshots(manager, persist_to_postgres=True)
         await self.game_db_service.save_world_state(
             manager.server.world_id,
             manager.server.world.world_state,
@@ -169,6 +181,7 @@ class ServerControlService:
         manager = self.managers.get(server_code)
         if not manager:
             return
+        await self._persist_all_player_snapshots(manager, persist_to_postgres=True)
         await self.game_db_service.save_world_state(
             manager.server.world_id,
             manager.server.world.world_state,
@@ -197,6 +210,49 @@ class ServerControlService:
         if not manager:
             raise ValueError("Server is not active")
         return manager
+
+    async def _persist_player_snapshot(
+        self,
+        manager: GameServerManager,
+        sid: str,
+        *,
+        persist_to_postgres: bool = False,
+    ) -> None:
+        if sid not in manager.server.players:
+            return
+        snapshot = manager.build_player_snapshot(sid)
+        await self._persist_snapshot(
+            manager,
+            snapshot,
+            persist_to_postgres=persist_to_postgres,
+        )
+
+    async def _persist_all_player_snapshots(
+        self,
+        manager: GameServerManager,
+        *,
+        persist_to_postgres: bool = False,
+    ) -> None:
+        for sid in list(manager.list_player_ids()):
+            await self._persist_player_snapshot(
+                manager,
+                sid,
+                persist_to_postgres=persist_to_postgres,
+            )
+
+    async def _persist_snapshot(
+        self,
+        manager: GameServerManager,
+        snapshot: dict,
+        *,
+        persist_to_postgres: bool = False,
+    ) -> None:
+        await self.game_db_service.store_player_state(
+            manager.server.world.world_id,
+            int(snapshot["user_id"]),
+            snapshot,
+            persist_to_postgres=persist_to_postgres,
+        )
 
     async def _store_and_build_response(self, manager: GameServerManager) -> GameServerResponse:
         response = GameServerResponse(

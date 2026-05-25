@@ -66,6 +66,18 @@ class PlayerState:
             "mode_key": self.mode,
         }
 
+    def to_snapshot_dict(self, *, server_code: str) -> dict:
+        return {
+            "server_code": server_code,
+            "user_id": self.user_id,
+            "username": self.username,
+            "coordinates": list(self.position),
+            "direction_key": self.direction,
+            "health": self.health,
+            "mode_key": self.mode,
+            "going_circles": self.going_circles,
+        }
+
 
 @dataclass
 class WorldState:

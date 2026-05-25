@@ -5,6 +5,7 @@ import unittest
 from basicRuntime import BasicScriptRuntime
 from gameClasses import GameServer, World
 from gameServerManager import GameServerManager
+from serverControlService import ServerControlService
 from worldGenerator import WorldGenerator
 
 
@@ -71,6 +72,84 @@ class GameplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message["message"], "hello")
         payload = self.manager.build_world_payload("sid1")
         self.assertEqual(payload["chat_history"][-1]["message"], "hello")
+
+    async def test_player_snapshot_restores_state(self):
+        await self.manager.turn_player("sid1", "right")
+        await self.manager.move_player("sid1", "forward")
+
+        snapshot = self.manager.build_player_snapshot("sid1")
+
+        restored_world = World(
+            world_id=2,
+            world_name="Restored World",
+            world_seed="restored-seed",
+            world_creator_id=1,
+            world_created_at=0.0,
+            last_modified=0.0,
+            world_state=WorldGenerator().generate_world("restored-seed"),
+        )
+        restored_manager = GameServerManager(
+            GameServer(world=restored_world, host_id=1, max_players=4, server_code="ZZZ999")
+        )
+        restored_manager.start()
+
+        try:
+            restored_player = await restored_manager.add_player(
+                "sid-restored",
+                self.user,
+                restored_state=snapshot,
+            )
+
+            self.assertEqual(restored_player.position, tuple(snapshot["coordinates"]))
+            self.assertEqual(restored_player.direction, snapshot["direction_key"])
+            self.assertEqual(restored_player.health, snapshot["health"])
+        finally:
+            await restored_manager.stop()
+
+    async def test_disconnect_persists_player_snapshot(self):
+        class FakeDBService:
+            def __init__(self):
+                self.saved_snapshots = []
+
+            async def get_world_for_user(self, world_id, user_id):
+                return self.world
+
+            async def get_player_state(self, world_id, user_id):
+                return None
+
+            async def store_player_state(self, world_id, user_id, snapshot, *, persist_to_postgres=False):
+                self.saved_snapshots.append((world_id, user_id, snapshot, persist_to_postgres))
+
+            async def upsert_server_record(self, server):
+                return None
+
+            async def store_active_server(self, server_info):
+                return None
+
+            async def delete_active_server(self, server_code):
+                return None
+
+            async def update_server_status(self, server_code, status, player_count):
+                return None
+
+            async def save_world_state(self, world_id, world_state):
+                return None
+
+        fake_db = FakeDBService()
+        fake_db.world = self.manager.server.world
+        service = ServerControlService(fake_db)
+        service.managers[self.manager.server.server_code] = self.manager
+
+        await self.manager.move_player("sid1", "forward")
+        expected_snapshot = self.manager.build_player_snapshot("sid1")
+        await service.remove_player(self.manager.server.server_code, "sid1")
+
+        persisted = fake_db.saved_snapshots[-1]
+        self.assertEqual(persisted[0], self.manager.server.world.world_id)
+        self.assertEqual(persisted[1], self.user.id)
+        self.assertTrue(persisted[3])
+        self.assertEqual(persisted[2]["coordinates"], expected_snapshot["coordinates"])
+        self.assertEqual(len(self.manager.server.players), 1)
 
     async def test_script_does_not_block_other_player_or_ticks(self):
         self.manager.script_action_tick_cost = 2

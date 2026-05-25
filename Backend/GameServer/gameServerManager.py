@@ -136,25 +136,48 @@ class GameServerManager:
             except asyncio.CancelledError:
                 pass
 
-    async def add_player(self, sid: str, user: SessionUser) -> PlayerState:
+    async def add_player(
+        self,
+        sid: str,
+        user: SessionUser,
+        *,
+        restored_state: dict | None = None,
+    ) -> PlayerState:
         async with self._lock:
             if sid in self.server.players:
                 return self.server.players[sid]
+            for existing_sid, existing_player in list(self.server.players.items()):
+                if existing_player.user_id == user.id:
+                    self.server.players.pop(existing_sid, None)
+                    self.server.players[sid] = existing_player
+                    if existing_sid in self._active_script_players:
+                        self._active_script_players.discard(existing_sid)
+                        self._active_script_players.add(sid)
+                    if existing_sid in self._script_cancel_events:
+                        self._script_cancel_events[sid] = self._script_cancel_events.pop(existing_sid)
+                    for action in self._pending_actions:
+                        if action.sid == existing_sid:
+                            action.sid = sid
+                    return existing_player
             if len(self.server.players) >= self.server.max_players:
                 raise ValueError("Server is full")
 
             spawn_point = self.server.world.world_state.spawn_point
-            player = PlayerState(
-                user_id=user.id,
-                username=user.username,
-                position=spawn_point,
-            )
+            if restored_state:
+                player = self._player_from_snapshot(user, restored_state, spawn_point)
+            else:
+                player = PlayerState(
+                    user_id=user.id,
+                    username=user.username,
+                    position=spawn_point,
+                )
             self.server.players[sid] = player
             self.server.status = "active"
             return player
 
-    async def remove_player(self, sid: str) -> bool:
+    async def remove_player(self, sid: str) -> tuple[bool, dict | None]:
         interrupted_actions: list[ScheduledPlayerAction] = []
+        snapshot: dict | None = None
         async with self._lock:
             self._active_script_players.discard(sid)
             self._script_cancel_events.pop(sid, None)
@@ -165,14 +188,16 @@ class GameServerManager:
                 else:
                     remaining_actions.append(action)
             self._pending_actions = remaining_actions
-            self.server.players.pop(sid, None)
+            player = self.server.players.pop(sid, None)
+            if player:
+                snapshot = self._player_snapshot(sid, player)
             self.server.status = "active" if self.server.players else "waiting"
 
         for action in interrupted_actions:
             if not action.future.done():
                 action.future.set_exception(BasicRuntimeError("Script interrupted because player disconnected"))
 
-        return not self.server.players
+        return not self.server.players, snapshot
 
     async def move_player(self, sid: str, direction: str) -> tuple[dict, dict]:
         state, public_state, _ = await self._schedule_player_action(
@@ -408,6 +433,10 @@ class GameServerManager:
                 player.health = int(health)
             return player.to_public_dict(sid)
 
+    def build_player_snapshot(self, sid: str) -> dict:
+        player = self._require_player(sid)
+        return self._player_snapshot(sid, player)
+
     def build_state_payload(self, sid: str) -> dict:
         return self._build_state_payload(sid)
 
@@ -493,3 +522,33 @@ class GameServerManager:
         if not player:
             raise ValueError("Player is not connected to this server")
         return player
+
+    def _player_snapshot(self, sid: str, player: PlayerState) -> dict:
+        return {
+            **player.to_snapshot_dict(server_code=self.server.server_code),
+            "player_id": sid,
+            "world_id": self.server.world.world_id,
+            "world_name": self.server.world.world_name,
+        }
+
+    def _player_from_snapshot(
+        self,
+        user: SessionUser,
+        snapshot: dict,
+        spawn_point,
+    ) -> PlayerState:
+        coordinates = snapshot.get("coordinates") or spawn_point
+        if not isinstance(coordinates, (list, tuple)) or len(coordinates) != 3:
+            coordinates = spawn_point
+        direction = str(snapshot.get("direction_key", "north")).lower()
+        if direction not in DIRECTION_TO_RUSSIAN:
+            direction = "north"
+        return PlayerState(
+            user_id=user.id,
+            username=str(snapshot.get("username") or user.username),
+            position=tuple(int(value) for value in coordinates),
+            direction=direction,
+            health=int(snapshot.get("health", 10000)),
+            mode="manual",
+            going_circles=bool(snapshot.get("going_circles", False)),
+        )

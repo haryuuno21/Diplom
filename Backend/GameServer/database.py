@@ -10,6 +10,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 REDIS_URL = os.getenv("REDIS_URL")
 SESSION_EXPIRE_SECONDS = int(os.getenv("SESSION_EXPIRE_SECONDS", 3600))
 SERVER_EXPIRE_SECONDS = int(os.getenv("SERVER_EXPIRE_SECONDS", 86400))
+PLAYER_STATE_EXPIRE_SECONDS = int(os.getenv("PLAYER_STATE_EXPIRE_SECONDS", 3600))
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -43,6 +44,17 @@ CREATE TABLE IF NOT EXISTS game_servers (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS player_states (
+    world_id INTEGER NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    server_code VARCHAR(6) NOT NULL,
+    player_state JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (world_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_states_server_code ON player_states(server_code);
 """
 
 
@@ -61,4 +73,3 @@ async def init_redis() -> Redis:
     if not REDIS_URL:
         raise RuntimeError("REDIS_URL is not configured")
     return from_url(REDIS_URL, decode_responses=True, encoding="utf-8")
-
