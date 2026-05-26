@@ -360,7 +360,7 @@ async def disconnect(sid):
     if not server_code:
         return
 
-    stopped = await fastapi_app.state.server_control_service.remove_player(server_code, sid)
+    await fastapi_app.state.server_control_service.remove_player(server_code, sid)
     await _emit_to_server_players(
         server_code,
         "player_left",
@@ -371,13 +371,6 @@ async def disconnect(sid):
         },
         skip_sid=sid,
     )
-    if stopped:
-        await _stop_broadcast_task(server_code)
-        await _emit_to_server_players(
-            server_code,
-            "server_stopped",
-            {"server_code": server_code, "message": "Server stopped because all players left"},
-        )
 
 
 @sio.event

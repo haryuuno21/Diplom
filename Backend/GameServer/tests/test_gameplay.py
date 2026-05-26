@@ -151,6 +151,53 @@ class GameplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted[2]["coordinates"], expected_snapshot["coordinates"])
         self.assertEqual(len(self.manager.server.players), 1)
 
+    async def test_server_stays_alive_for_idle_timeout(self):
+        class FakeDBService:
+            def __init__(self):
+                self.saved_snapshots = []
+                self.updated_servers = []
+                self.deleted_servers = []
+                self.saved_worlds = []
+
+            async def get_world_for_user(self, world_id, user_id):
+                return self.world
+
+            async def get_player_state(self, world_id, user_id):
+                return None
+
+            async def store_player_state(self, world_id, user_id, snapshot, *, persist_to_postgres=False):
+                self.saved_snapshots.append((world_id, user_id, snapshot, persist_to_postgres))
+
+            async def upsert_server_record(self, server):
+                return None
+
+            async def store_active_server(self, server_info):
+                return None
+
+            async def delete_active_server(self, server_code):
+                self.deleted_servers.append(server_code)
+
+            async def update_server_status(self, server_code, status, player_count):
+                self.updated_servers.append((server_code, status, player_count))
+
+            async def save_world_state(self, world_id, world_state):
+                self.saved_worlds.append((world_id, world_state.tick))
+
+        fake_db = FakeDBService()
+        fake_db.world = self.manager.server.world
+        service = ServerControlService(fake_db, idle_shutdown_seconds=0.05)
+        service.managers[self.manager.server.server_code] = self.manager
+
+        await service.remove_player(self.manager.server.server_code, "sid1")
+        await service.remove_player(self.manager.server.server_code, "sid2")
+
+        self.assertIn(self.manager.server.server_code, service.managers)
+        await asyncio.sleep(0.08)
+
+        self.assertNotIn(self.manager.server.server_code, service.managers)
+        self.assertIn(self.manager.server.server_code, fake_db.deleted_servers)
+        self.assertTrue(fake_db.saved_worlds)
+
     async def test_script_does_not_block_other_player_or_ticks(self):
         self.manager.script_action_tick_cost = 2
         start_tick = self.manager.server.world.world_state.tick

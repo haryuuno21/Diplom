@@ -1,19 +1,29 @@
+import asyncio
 import random
 
 from apiModels import GameServerResponse, SessionUser
+from database import SERVER_IDLE_SHUTDOWN_SECONDS
 from gameClasses import GameServer
 from gameDBService import GameDBService
 from gameServerManager import GameServerManager
 
 
 class ServerControlService:
-    def __init__(self, game_db_service: GameDBService):
+    def __init__(
+        self,
+        game_db_service: GameDBService,
+        *,
+        idle_shutdown_seconds: int = SERVER_IDLE_SHUTDOWN_SECONDS,
+    ):
         self.managers: dict[str, GameServerManager] = {}
+        self._idle_shutdown_tasks: dict[str, asyncio.Task] = {}
         self.game_db_service = game_db_service
+        self.idle_shutdown_seconds = max(0, int(idle_shutdown_seconds))
 
     async def create_server(self, world_id: int, user: SessionUser) -> GameServerResponse:
         existing = self._find_existing_server(world_id, user.id)
         if existing:
+            await self._cancel_idle_shutdown(existing.server.server_code)
             return await self._store_and_build_response(existing)
 
         world = await self.game_db_service.get_world_for_user(world_id, user.id)
@@ -45,6 +55,7 @@ class ServerControlService:
 
     async def add_player(self, server_code: str, sid: str, user: SessionUser) -> dict:
         manager = self._require_manager(server_code)
+        await self._cancel_idle_shutdown(server_code)
         restored_state = await self.game_db_service.get_player_state(manager.server.world.world_id, user.id)
         await manager.add_player(sid, user, restored_state=restored_state)
         await self._persist_player_snapshot(manager, sid)
@@ -60,7 +71,8 @@ class ServerControlService:
         if snapshot is not None:
             await self._persist_snapshot(manager, snapshot, persist_to_postgres=True)
         if should_stop:
-            await self.stop_server(server_code)
+            await self._schedule_idle_shutdown(server_code)
+            await self._store_and_build_response(manager)
             return True
 
         await self._store_and_build_response(manager)
@@ -162,6 +174,10 @@ class ServerControlService:
                 await self.stop_server(server_code)
 
     async def stop_server(self, server_code: str) -> None:
+        await self._cancel_idle_shutdown(server_code)
+        await self._finalize_server_stop(server_code)
+
+    async def _finalize_server_stop(self, server_code: str) -> None:
         manager = self.managers.pop(server_code, None)
         if not manager:
             await self.game_db_service.delete_active_server(server_code)
@@ -188,6 +204,8 @@ class ServerControlService:
         )
 
     async def shutdown(self) -> None:
+        for server_code in list(self._idle_shutdown_tasks.keys()):
+            await self._cancel_idle_shutdown(server_code)
         for server_code in list(self.managers.keys()):
             await self.stop_server(server_code)
 
@@ -253,6 +271,33 @@ class ServerControlService:
             snapshot,
             persist_to_postgres=persist_to_postgres,
         )
+
+    async def _schedule_idle_shutdown(self, server_code: str) -> None:
+        await self._cancel_idle_shutdown(server_code)
+
+        async def _worker() -> None:
+            try:
+                await asyncio.sleep(self.idle_shutdown_seconds)
+                manager = self.managers.get(server_code)
+                if not manager or manager.server.players:
+                    return
+                await self._finalize_server_stop(server_code)
+            except asyncio.CancelledError:
+                return
+            finally:
+                self._idle_shutdown_tasks.pop(server_code, None)
+
+        self._idle_shutdown_tasks[server_code] = asyncio.create_task(_worker())
+
+    async def _cancel_idle_shutdown(self, server_code: str) -> None:
+        task = self._idle_shutdown_tasks.pop(server_code, None)
+        if not task:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     async def _store_and_build_response(self, manager: GameServerManager) -> GameServerResponse:
         response = GameServerResponse(
