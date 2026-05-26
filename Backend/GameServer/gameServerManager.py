@@ -50,6 +50,7 @@ class GameServerManager:
         self._active_script_players: set[str] = set()
         self._pending_actions: list[ScheduledPlayerAction] = []
         self._script_cancel_events: dict[str, asyncio.Event] = {}
+        self._player_script_drafts: dict[str, dict] = {}
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -150,6 +151,8 @@ class GameServerManager:
                 if existing_player.user_id == user.id:
                     self.server.players.pop(existing_sid, None)
                     self.server.players[sid] = existing_player
+                    if existing_sid in self._player_script_drafts:
+                        self._player_script_drafts[sid] = self._player_script_drafts.pop(existing_sid)
                     if existing_sid in self._active_script_players:
                         self._active_script_players.discard(existing_sid)
                         self._active_script_players.add(sid)
@@ -172,6 +175,7 @@ class GameServerManager:
                     position=spawn_point,
                 )
             self.server.players[sid] = player
+            self._set_player_script_draft(sid, restored_state)
             self.server.status = "active"
             return player
 
@@ -181,6 +185,7 @@ class GameServerManager:
         async with self._lock:
             self._active_script_players.discard(sid)
             self._script_cancel_events.pop(sid, None)
+            script_draft = self._player_script_drafts.pop(sid, None)
             remaining_actions: list[ScheduledPlayerAction] = []
             for action in self._pending_actions:
                 if action.sid == sid:
@@ -190,7 +195,7 @@ class GameServerManager:
             self._pending_actions = remaining_actions
             player = self.server.players.pop(sid, None)
             if player:
-                snapshot = self._player_snapshot(sid, player)
+                snapshot = self._player_snapshot(sid, player, script_draft=script_draft)
             self.server.status = "active" if self.server.players else "waiting"
 
         for action in interrupted_actions:
@@ -453,7 +458,13 @@ class GameServerManager:
         }
         if sid is not None and sid in self.server.players:
             payload["self"] = self._build_state_payload(sid)
+            script_draft = self._player_script_drafts.get(sid)
+            if script_draft is not None:
+                payload["script_draft"] = script_draft
         return payload
+
+    def load_chat_history(self, messages: list[dict]) -> None:
+        self.chat_history = messages[-50:]
 
     def build_tick_payload(self, sid: str) -> dict:
         return {
@@ -468,6 +479,14 @@ class GameServerManager:
 
     def list_player_ids(self) -> list[str]:
         return list(self.server.players.keys())
+
+    def set_player_script_draft(self, sid: str, payload: dict | str) -> dict | None:
+        draft = self._normalize_script_draft(payload)
+        if draft is None:
+            self._player_script_drafts.pop(sid, None)
+            return None
+        self._player_script_drafts[sid] = draft
+        return draft
 
     async def add_chat_message(self, sid: str, payload: dict | str) -> dict:
         async with self._lock:
@@ -523,12 +542,15 @@ class GameServerManager:
             raise ValueError("Player is not connected to this server")
         return player
 
-    def _player_snapshot(self, sid: str, player: PlayerState) -> dict:
+    def _player_snapshot(self, sid: str, player: PlayerState, *, script_draft: dict | None = None) -> dict:
+        draft = script_draft if script_draft is not None else self._player_script_drafts.get(sid)
         return {
             **player.to_snapshot_dict(server_code=self.server.server_code),
             "player_id": sid,
             "world_id": self.server.world.world_id,
             "world_name": self.server.world.world_name,
+            "script_name": draft.get("script_name") if draft else None,
+            "script_content": draft.get("script_content") if draft else None,
         }
 
     def _player_from_snapshot(
@@ -552,3 +574,26 @@ class GameServerManager:
             mode="manual",
             going_circles=bool(snapshot.get("going_circles", False)),
         )
+
+    def _set_player_script_draft(self, sid: str, snapshot: dict | None) -> None:
+        draft = self._normalize_script_draft(snapshot)
+        if draft is None:
+            self._player_script_drafts.pop(sid, None)
+            return
+        self._player_script_drafts[sid] = draft
+
+    @staticmethod
+    def _normalize_script_draft(payload: dict | str | None) -> dict | None:
+        if payload is None:
+            return None
+        if isinstance(payload, str):
+            return {"script_name": None, "script_content": payload}
+
+        script_name = str(payload.get("script_name", "")).strip() or None
+        script_content = str(payload.get("script_content", ""))
+        if script_name is None and script_content == "":
+            return None
+        return {
+            "script_name": script_name,
+            "script_content": script_content,
+        }

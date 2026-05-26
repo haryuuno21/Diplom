@@ -73,6 +73,96 @@ class GameplayTests(unittest.IsolatedAsyncioTestCase):
         payload = self.manager.build_world_payload("sid1")
         self.assertEqual(payload["chat_history"][-1]["message"], "hello")
 
+    async def test_script_draft_is_in_player_snapshot_and_world_payload(self):
+        self.manager.set_player_script_draft(
+            "sid1",
+            {
+                "script_name": "restore.bas",
+                "script_content": 'MOVE("forward")',
+            },
+        )
+
+        snapshot = self.manager.build_player_snapshot("sid1")
+        payload = self.manager.build_world_payload("sid1")
+
+        self.assertEqual(snapshot["script_name"], "restore.bas")
+        self.assertEqual(snapshot["script_content"], 'MOVE("forward")')
+        self.assertEqual(payload["script_draft"]["script_name"], "restore.bas")
+        self.assertEqual(payload["script_draft"]["script_content"], 'MOVE("forward")')
+
+    async def test_loaded_chat_history_is_in_world_payload(self):
+        self.manager.load_chat_history(
+            [
+                {
+                    "player_id": "old-sid",
+                    "user_id": 1,
+                    "username": "tester",
+                    "message": "from database",
+                    "script_name": None,
+                    "script_content": None,
+                    "timestamp": 123,
+                }
+            ]
+        )
+
+        payload = self.manager.build_world_payload("sid1")
+        self.assertEqual(payload["chat_history"][-1]["message"], "from database")
+
+    async def test_service_persists_chat_message(self):
+        class FakeDBService:
+            def __init__(self):
+                self.saved_messages = []
+
+            async def store_chat_message(self, world_id, server_code, message):
+                self.saved_messages.append((world_id, server_code, message))
+
+        fake_db = FakeDBService()
+        service = ServerControlService(fake_db)
+        service.managers[self.manager.server.server_code] = self.manager
+
+        message = await service.add_chat_message(
+            self.manager.server.server_code,
+            "sid1",
+            {"message": "persist me"},
+        )
+
+        self.assertEqual(message["message"], "persist me")
+        self.assertEqual(fake_db.saved_messages[-1][0], self.manager.server.world_id)
+        self.assertEqual(fake_db.saved_messages[-1][1], self.manager.server.server_code)
+        self.assertEqual(fake_db.saved_messages[-1][2]["message"], "persist me")
+
+    async def test_service_persists_script_draft(self):
+        class FakeDBService:
+            def __init__(self):
+                self.saved_snapshots = []
+
+            async def store_player_state(self, world_id, user_id, snapshot, *, persist_to_postgres=False):
+                self.saved_snapshots.append((world_id, user_id, snapshot, persist_to_postgres))
+
+            async def upsert_server_record(self, server):
+                return None
+
+            async def store_active_server(self, server_info):
+                return None
+
+        fake_db = FakeDBService()
+        service = ServerControlService(fake_db)
+        service.managers[self.manager.server.server_code] = self.manager
+
+        draft = await service.save_player_script_state(
+            self.manager.server.server_code,
+            "sid1",
+            {
+                "script_name": "restore.bas",
+                "script_content": 'MOVE("forward")',
+            },
+        )
+
+        self.assertEqual(draft["script_name"], "restore.bas")
+        self.assertTrue(fake_db.saved_snapshots[-1][3])
+        self.assertEqual(fake_db.saved_snapshots[-1][2]["script_name"], "restore.bas")
+        self.assertEqual(fake_db.saved_snapshots[-1][2]["script_content"], 'MOVE("forward")')
+
     async def test_player_snapshot_restores_state(self):
         await self.manager.turn_player("sid1", "right")
         await self.manager.move_player("sid1", "forward")

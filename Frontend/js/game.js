@@ -175,6 +175,79 @@ function clearSelectedScriptFile() {
   scriptFileInput.value = "";
 }
 
+let scriptDraftSaveTimer = null;
+const SCRIPT_DRAFT_STORAGE_KEY = `script_draft:${serverCode}`;
+
+function getScriptDraftPayload() {
+  return {
+    script_name: state.selectedScriptFileName,
+    script_content: scriptInput.value,
+  };
+}
+
+function loadScriptDraftBackup() {
+  try {
+    const raw = localStorage.getItem(SCRIPT_DRAFT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function storeScriptDraftBackup(payload) {
+  try {
+    const hasContent = payload && (payload.script_name || payload.script_content);
+    if (!hasContent) {
+      localStorage.removeItem(SCRIPT_DRAFT_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(SCRIPT_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    return;
+  }
+}
+
+function saveScriptDraft(immediate = false) {
+  const draft = getScriptDraftPayload();
+  storeScriptDraftBackup(draft);
+
+  if (!socket.connected) {
+    return;
+  }
+
+  const emitDraft = () => {
+    socket.emit("save_script_state", draft);
+  };
+
+  if (immediate) {
+    if (scriptDraftSaveTimer) {
+      clearTimeout(scriptDraftSaveTimer);
+      scriptDraftSaveTimer = null;
+    }
+    emitDraft();
+    return;
+  }
+
+  if (scriptDraftSaveTimer) {
+    clearTimeout(scriptDraftSaveTimer);
+  }
+  scriptDraftSaveTimer = setTimeout(() => {
+    scriptDraftSaveTimer = null;
+    emitDraft();
+  }, 300);
+}
+
+function restoreScriptDraft(scriptDraft) {
+  const draft = scriptDraft || loadScriptDraftBackup();
+  if (!draft) {
+    return false;
+  }
+
+  scriptInput.value = draft.script_content || "";
+  updateSelectedScriptFile(draft.script_name || null);
+  return true;
+}
+
 function setConnectionState(text, kind = "neutral") {
   if (!connectionChip) {
     return;
@@ -588,6 +661,10 @@ socket.on("world_state", (payload) => {
   state.players = payload.players || [];
   syncPlayers(state.players);
   hydrateChat(payload.chat_history || []);
+  const restoredDraft = restoreScriptDraft(payload.script_draft);
+  if (restoredDraft && !payload.script_draft) {
+    saveScriptDraft(true);
+  }
   if (payload.self) {
     applySelfState(payload.self);
   }
@@ -659,6 +736,7 @@ scriptFileInput.addEventListener("change", async (event) => {
     const scriptText = await file.text();
     scriptInput.value = scriptText;
     updateSelectedScriptFile(file.name);
+    saveScriptDraft(true);
     setScriptStatus(`Файл ${file.name} загружен в редактор.`, "success");
   } catch (error) {
     clearSelectedScriptFile();
@@ -666,8 +744,13 @@ scriptFileInput.addEventListener("change", async (event) => {
   }
 });
 
+scriptInput.addEventListener("input", () => {
+  saveScriptDraft();
+});
+
 clearScriptFileBtn.addEventListener("click", () => {
   clearSelectedScriptFile();
+  saveScriptDraft(true);
   setScriptStatus("Выбранный файл сброшен.");
 });
 
@@ -688,6 +771,7 @@ runScriptBtn.addEventListener("click", () => {
     return;
   }
   setScriptStatus("Скрипт отправлен на сервер...");
+  saveScriptDraft(true);
   if (state.selectedScriptFileName) {
     socket.emit("exec", {
       script_name: state.selectedScriptFileName,
@@ -715,6 +799,14 @@ copyServerCodeBtn.addEventListener("click", async () => {
   } catch (error) {
     setStatus("Не удалось скопировать код.", "error");
   }
+});
+
+window.addEventListener("pagehide", () => {
+  saveScriptDraft(true);
+});
+
+window.addEventListener("beforeunload", () => {
+  saveScriptDraft(true);
 });
 
 let lastActionAt = 0;

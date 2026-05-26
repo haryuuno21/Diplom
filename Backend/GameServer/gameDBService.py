@@ -326,6 +326,60 @@ class GameDBService:
             persist_to_postgres=True,
         )
 
+    async def store_chat_message(
+        self,
+        world_id: int,
+        server_code: str,
+        message: dict,
+    ) -> None:
+        async with self.db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO chat_messages (
+                    world_id, server_code, player_id, user_id, username,
+                    message, script_name, script_content, client_timestamp
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """,
+                world_id,
+                server_code,
+                message.get("player_id"),
+                message.get("user_id"),
+                str(message.get("username", "")),
+                str(message.get("message", "")),
+                message.get("script_name"),
+                message.get("script_content"),
+                int(message.get("timestamp", 0)),
+            )
+
+    async def get_chat_history(self, world_id: int, *, limit: int = 50) -> list[dict]:
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT player_id, user_id, username, message, script_name,
+                       script_content, client_timestamp
+                FROM chat_messages
+                WHERE world_id = $1
+                ORDER BY created_at DESC, id DESC
+                LIMIT $2
+                """,
+                world_id,
+                limit,
+            )
+
+        return [
+            {
+                "player_id": row["player_id"],
+                "user_id": row["user_id"],
+                "username": row["username"],
+                "message": row["message"],
+                "script_name": row["script_name"],
+                "script_content": row["script_content"],
+                "timestamp": row["client_timestamp"],
+            }
+            for row in reversed(rows)
+        ]
+
     def _row_to_world(self, row) -> World:
         state_payload = _coerce_json(row["world_state"])
         return World(

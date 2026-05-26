@@ -42,6 +42,7 @@ class ServerControlService:
             script_action_tick_cost=4,
             tick_interval_seconds=0.05,
         )
+        manager.load_chat_history(await self.game_db_service.get_chat_history(world.world_id))
         manager.start()
         self.managers[server.server_code] = manager
 
@@ -124,6 +125,12 @@ class ServerControlService:
         await self._store_and_build_response(manager)
         return state, public_state, script_result
 
+    async def save_player_script_state(self, server_code: str, sid: str, payload: dict | str) -> dict | None:
+        manager = self._require_manager(server_code)
+        draft = manager.set_player_script_draft(sid, payload)
+        await self._persist_player_snapshot(manager, sid, persist_to_postgres=True)
+        return draft
+
     async def stop_script(self, server_code: str, sid: str) -> tuple[dict, dict] | None:
         manager = self._require_manager(server_code)
         result = await manager.stop_script(sid)
@@ -166,7 +173,13 @@ class ServerControlService:
 
     async def add_chat_message(self, server_code: str, sid: str, payload: dict | str) -> dict:
         manager = self._require_manager(server_code)
-        return await manager.add_chat_message(sid, payload)
+        message = await manager.add_chat_message(sid, payload)
+        await self.game_db_service.store_chat_message(
+            manager.server.world_id,
+            manager.server.server_code,
+            message,
+        )
+        return message
 
     async def stop_world_servers(self, world_id: int) -> None:
         for server_code, manager in list(self.managers.items()):

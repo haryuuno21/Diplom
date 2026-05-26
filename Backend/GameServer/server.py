@@ -113,6 +113,18 @@ async def _emit_to_server_players(server_code: str, event_name: str, payload: di
         await sio.emit(event_name, payload, to=player_id)
 
 
+def _parse_script_payload(script_text):
+    if isinstance(script_text, dict):
+        script_name = str(script_text.get("script_name", "")).strip()
+        script_body = str(script_text.get("script_content", ""))
+        if script_name:
+            extension = os.path.splitext(script_name)[1].lower()
+            if extension not in (".bas", ".txt"):
+                return None, None, f"Unsupported script extension: {extension}"
+        return script_name or None, script_body, None
+    return None, str(script_text), None
+
+
 async def _broadcast_server_ticks(server_code: str) -> None:
     last_persist_at = time.monotonic()
     try:
@@ -460,21 +472,16 @@ async def exec(sid, script_text):
     async def on_state_change(state: dict, public_state: dict):
         await _emit_state_bundle(server_code, sid, state, public_state)
 
-    if isinstance(script_text, dict):
-        script_name = str(script_text.get("script_name", "")).strip()
-        script_body = str(script_text.get("script_content", ""))
-        if script_name:
-            extension = os.path.splitext(script_name)[1].lower()
-            if extension not in (".bas", ".txt"):
-                await sio.emit(
-                    "basic_error",
-                    f"Unsupported script extension: {extension}",
-                    to=sid,
-                )
-                return
-        script_source = script_body
-    else:
-        script_source = str(script_text)
+    script_name, script_source, script_error = _parse_script_payload(script_text)
+    if script_error:
+        await sio.emit("basic_error", script_error, to=sid)
+        return
+    if script_text is not None:
+        await fastapi_app.state.server_control_service.save_player_script_state(
+            server_code,
+            sid,
+            {"script_name": script_name, "script_content": script_source},
+        )
 
     try:
         state, public_state, result = await fastapi_app.state.server_control_service.execute_script(
@@ -517,6 +524,28 @@ async def exec(sid, script_text):
 @sio.event
 async def execute_script(sid, script_text):
     await exec(sid, script_text)
+
+
+@sio.event
+async def save_script_state(sid, script_text):
+    try:
+        session = await sio.get_session(sid)
+    except KeyError:
+        return
+    server_code = session.get("server_code")
+    if not server_code:
+        return
+
+    script_name, script_source, script_error = _parse_script_payload(script_text)
+    if script_error:
+        await sio.emit("basic_error", script_error, to=sid)
+        return
+
+    await fastapi_app.state.server_control_service.save_player_script_state(
+        server_code,
+        sid,
+        {"script_name": script_name, "script_content": script_source},
+    )
 
 
 @sio.event

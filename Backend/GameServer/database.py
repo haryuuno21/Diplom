@@ -56,6 +56,26 @@ CREATE TABLE IF NOT EXISTS player_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_states_server_code ON player_states(server_code);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    world_id INTEGER NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+    server_code VARCHAR(6) NOT NULL,
+    player_id TEXT,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    username VARCHAR(50) NOT NULL,
+    message TEXT NOT NULL,
+    script_name TEXT,
+    script_content TEXT,
+    client_timestamp BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_world_created
+    ON chat_messages(world_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_server_created
+    ON chat_messages(server_code, created_at DESC);
 """
 
 
